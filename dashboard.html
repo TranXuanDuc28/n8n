@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>📊 FB Comment Analytics Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 20px;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        header {
+            background: white;
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            margin-bottom: 30px;
+            text-align: center;
+        }
+
+        h1 {
+            color: #333;
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .subtitle {
+            color: #666;
+            font-size: 1.1em;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .stat-card {
+            background: white;
+            padding: 25px;
+            border-radius: 15px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            transition: transform 0.3s ease;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+        }
+
+        .stat-card h3 {
+            color: #666;
+            font-size: 0.9em;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+        }
+
+        .stat-card .number {
+            font-size: 2.5em;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .stat-card .subtitle {
+            font-size: 0.85em;
+            color: #999;
+        }
+
+        .positive { border-left: 5px solid #4CAF50; }
+        .positive .number { color: #4CAF50; }
+
+        .negative { border-left: 5px solid #F44336; }
+        .negative .number { color: #F44336; }
+
+        .neutral { border-left: 5px solid #9E9E9E; }
+        .neutral .number { color: #9E9E9E; }
+
+        .spam { border-left: 5px solid #FF9800; }
+        .spam .number { color: #FF9800; }
+
+        .toxic { border-left: 5px solid #E91E63; }
+        .toxic .number { color: #E91E63; }
+
+        .total { border-left: 5px solid #2196F3; }
+        .total .number { color: #2196F3; }
+
+        .chart-container {
+            background: white;
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            margin-bottom: 30px;
+        }
+
+        .chart-container h2 {
+            color: #333;
+            margin-bottom: 20px;
+        }
+
+        .keyword-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            gap: 10px;
+            margin-top: 15px;
+        }
+
+        .keyword-tag {
+            background: #f0f0f0;
+            padding: 10px 15px;
+            border-radius: 20px;
+            text-align: center;
+            transition: background 0.3s ease;
+        }
+
+        .keyword-tag:hover {
+            background: #e0e0e0;
+        }
+
+        .keyword-tag .word {
+            font-weight: bold;
+            color: #333;
+        }
+
+        .keyword-tag .count {
+            font-size: 0.85em;
+            color: #666;
+        }
+
+        .moderation-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+        }
+
+        .moderation-table th,
+        .moderation-table td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+
+        .moderation-table th {
+            background: #f5f5f5;
+            font-weight: bold;
+            color: #333;
+        }
+
+        .moderation-table tr:hover {
+            background: #f9f9f9;
+        }
+
+        .badge {
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 0.85em;
+            font-weight: bold;
+        }
+
+        .badge-delete { background: #ffebee; color: #c62828; }
+        .badge-hide { background: #fff3e0; color: #e65100; }
+        .badge-review { background: #e3f2fd; color: #1565c0; }
+
+        .loading {
+            text-align: center;
+            padding: 50px;
+            color: #666;
+        }
+
+        .error {
+            background: #ffebee;
+            color: #c62828;
+            padding: 20px;
+            border-radius: 10px;
+            margin: 20px 0;
+        }
+
+        .refresh-btn {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 25px;
+            font-size: 1em;
+            cursor: pointer;
+            margin-top: 10px;
+            transition: background 0.3s ease;
+        }
+
+        .refresh-btn:hover {
+            background: #45a049;
+        }
+
+        .last-updated {
+            text-align: center;
+            color: #666;
+            margin-top: 10px;
+            font-size: 0.9em;
+        }
+
+        footer {
+            text-align: center;
+            color: white;
+            margin-top: 30px;
+            padding: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📊 Facebook Comment Analytics</h1>
+            <p class="subtitle">Real-time Sentiment & Moderation Dashboard</p>
+            <button class="refresh-btn" onclick="loadData()">🔄 Refresh Data</button>
+            <p class="last-updated" id="lastUpdated">Loading...</p>
+        </header>
+
+        <div id="loadingDiv" class="loading">
+            <h2>⏳ Loading data...</h2>
+        </div>
+
+        <div id="errorDiv" class="error" style="display: none;"></div>
+
+        <div id="statsGrid" class="stats-grid" style="display: none;"></div>
+
+        <div id="keywordsSection" class="chart-container" style="display: none;">
+            <h2>🔑 Top Keywords</h2>
+            <div id="keywordsList" class="keyword-list"></div>
+        </div>
+
+        <div id="moderationSection" class="chart-container" style="display: none;">
+            <h2>⚠️ Moderation Queue</h2>
+            <div id="moderationTable"></div>
+        </div>
+
+        <footer>
+            <p>Made with ❤️ for Golden Hour Watch Shop</p>
+            <p>Powered by Google Gemini AI & MySQL</p>
+        </footer>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:3000/api';
+
+        async function loadData() {
+            try {
+                document.getElementById('loadingDiv').style.display = 'block';
+                document.getElementById('errorDiv').style.display = 'none';
+
+                // Fetch all data in parallel
+                const [dashboard, modStats, keywords, moderationQueue] = await Promise.all([
+                    fetch(`${API_BASE}/analytics/dashboard?days=7`).then(r => r.json()),
+                    fetch(`${API_BASE}/moderation/stats?days=7`).then(r => r.json()),
+                    fetch(`${API_BASE}/analytics/keywords?limit=15`).then(r => r.json()),
+                    fetch(`${API_BASE}/moderation/queue`).then(r => r.json())
+                ]);
+
+                // Hide loading
+                document.getElementById('loadingDiv').style.display = 'none';
+
+                // Show sections
+                document.getElementById('statsGrid').style.display = 'grid';
+                document.getElementById('keywordsSection').style.display = 'block';
+                document.getElementById('moderationSection').style.display = 'block';
+
+                // Render stats
+                renderStats(dashboard.data.summary, modStats.data);
+
+                // Render keywords
+                renderKeywords(keywords.data);
+
+                // Render moderation queue
+                renderModerationQueue(moderationQueue.data);
+
+                // Update timestamp
+                document.getElementById('lastUpdated').textContent = 
+                    `Last updated: ${new Date().toLocaleString('vi-VN')}`;
+
+            } catch (error) {
+                document.getElementById('loadingDiv').style.display = 'none';
+                document.getElementById('errorDiv').style.display = 'block';
+                document.getElementById('errorDiv').textContent = 
+                    `❌ Error loading data: ${error.message}. Make sure backend is running on port 3000.`;
+            }
+        }
+
+        function renderStats(summary, modStats) {
+            const statsHTML = `
+                <div class="stat-card total">
+                    <h3>Total Comments</h3>
+                    <div class="number">${summary.total_comments || 0}</div>
+                    <div class="subtitle">Last 7 days</div>
+                </div>
+
+                <div class="stat-card positive">
+                    <h3>Positive</h3>
+                    <div class="number">${summary.positive_count || 0}</div>
+                    <div class="subtitle">${((summary.positive_count / summary.total_comments) * 100 || 0).toFixed(1)}%</div>
+                </div>
+
+                <div class="stat-card negative">
+                    <h3>Negative</h3>
+                    <div class="number">${summary.negative_count || 0}</div>
+                    <div class="subtitle">${((summary.negative_count / summary.total_comments) * 100 || 0).toFixed(1)}%</div>
+                </div>
+
+                <div class="stat-card neutral">
+                    <h3>Neutral</h3>
+                    <div class="number">${summary.neutral_count || 0}</div>
+                    <div class="subtitle">${((summary.neutral_count / summary.total_comments) * 100 || 0).toFixed(1)}%</div>
+                </div>
+
+                <div class="stat-card spam">
+                    <h3>Spam Detected</h3>
+                    <div class="number">${summary.spam_count || 0}</div>
+                    <div class="subtitle">Auto-hidden</div>
+                </div>
+
+                <div class="stat-card toxic">
+                    <h3>Toxic Comments</h3>
+                    <div class="number">${modStats.total_toxic || 0}</div>
+                    <div class="subtitle">${modStats.deleted || 0} deleted, ${modStats.hidden || 0} hidden</div>
+                </div>
+            `;
+
+            document.getElementById('statsGrid').innerHTML = statsHTML;
+        }
+
+        function renderKeywords(keywords) {
+            if (!keywords || keywords.length === 0) {
+                document.getElementById('keywordsList').innerHTML = '<p>No keywords yet</p>';
+                return;
+            }
+
+            const keywordsHTML = keywords.map(kw => `
+                <div class="keyword-tag">
+                    <div class="word">${kw.keyword}</div>
+                    <div class="count">${kw.frequency} mentions</div>
+                </div>
+            `).join('');
+
+            document.getElementById('keywordsList').innerHTML = keywordsHTML;
+        }
+
+        function renderModerationQueue(queue) {
+            if (!queue || queue.length === 0) {
+                document.getElementById('moderationTable').innerHTML = 
+                    '<p style="text-align: center; color: #666;">✅ No comments pending moderation</p>';
+                return;
+            }
+
+            const tableHTML = `
+                <table class="moderation-table">
+                    <thead>
+                        <tr>
+                            <th>User</th>
+                            <th>Message</th>
+                            <th>Category</th>
+                            <th>Action</th>
+                            <th>Time</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${queue.slice(0, 10).map(item => `
+                            <tr>
+                                <td>${item.from_name}</td>
+                                <td>${item.message.substring(0, 60)}...</td>
+                                <td>${item.toxic_category || (item.is_spam ? 'spam' : 'unknown')}</td>
+                                <td>
+                                    <span class="badge badge-${item.moderation_action}">
+                                        ${item.moderation_action}
+                                    </span>
+                                </td>
+                                <td>${new Date(item.created_time).toLocaleString('vi-VN', {
+                                    month: 'short',
+                                    day: 'numeric',
+                                    hour: '2-digit',
+                                    minute: '2-digit'
+                                })}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            `;
+
+            document.getElementById('moderationTable').innerHTML = tableHTML;
+        }
+
+        // Load data on page load
+        loadData();
+
+        // Auto-refresh every 30 seconds
+        setInterval(loadData, 30000);
+    </script>
+</body>
+</html>
+
