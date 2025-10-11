@@ -20,12 +20,14 @@ const sequelize = new Sequelize(process.env.DB_NAME , process.env.DB_USER , proc
 });
  
 
-// Import all models
+// Import all models (use exact filenames / casing)
 const Post = require('./post');
 const Token = require('./token');
 const Engagement = require('./engagement');
 const PlatformPost = require('./platformpost');
-// const Customer = require('./customer');
+const AbTest = require('./AbTest');
+const AbTestVariant = require('./AbTestVariant');
+const Visual = require('./Visual');
 
 // Initialize models
 const models = {
@@ -33,7 +35,9 @@ const models = {
   Token: Token(sequelize),
   Engagement: Engagement(sequelize),
   PlatformPost: PlatformPost(sequelize)
-  // ,Customer: Customer(sequelize)
+  ,AbTest: AbTest(sequelize)
+  ,AbTestVariant: AbTestVariant(sequelize)
+  ,Visual: Visual(sequelize)
 };
 
 // Setup associations if provided by model definitions

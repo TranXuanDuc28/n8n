@@ -1,8 +1,36 @@
 const { Post } = require('../models');
 const n8nService = require('../services/n8n.service');
 const PostsService = require('../services/posts.service');
+const { generateEmbedding } = require('../services/gemini.service');
 
 class PostsController {
+  async getUnpublishedPosts(req, res) {
+    try {
+      const posts = await PostsService.getPostsByStatus('scheduled');
+      res.json(posts);
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: error.message
+      });
+    }
+  }
+  async generateContentWithGemini(req, res) {
+    try {
+      const { prompt } = req.body;
+
+      if (!prompt) {
+        return res.status(400).json({ error: "Content is required" });
+      }
+
+      const result = await PostsService.generateResponse(prompt);
+
+      res.json(result);
+    } catch (err) {
+      console.error("Controller error:", err);
+      res.status(500).json({ error: err.message });
+    }
+}
   // GET /api/get-all-posts
   async getAllPosts(req, res) {
     try {
@@ -130,6 +158,31 @@ class PostsController {
       res.status(500).json({
         success: false,
         message: error.message
+      });
+    }
+  }
+
+  // POST /api/embed
+  async createEmbeddings(req, res) {
+    try {
+      const { text } = req.body;
+
+      if (!text || text.trim() === '') {
+        return res.status(400).json({ error: "Thiếu trường 'text'" });
+      }
+
+      const embedding = await generateEmbedding(text);
+
+      return res.json({
+        success: true,
+        model: 'models/text-embedding-004',
+        embedding,
+      });
+    } catch (err) {
+      console.error('❌ Lỗi tạo embedding:', err);
+      res.status(500).json({
+        error: 'Không thể tạo embedding từ Gemini API',
+        detail: err.message,
       });
     }
   }

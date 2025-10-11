@@ -20,7 +20,7 @@ module.exports = (sequelize) => {
       allowNull: true
     },
     status: {
-      type: DataTypes.ENUM('draft', 'pending', 'published', 'failed'),
+      type: DataTypes.ENUM('draft','scheduled', 'pending', 'published', 'failed'),
       defaultValue: 'draft'
     },
     useAI: {

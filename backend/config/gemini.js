@@ -1,8 +1,8 @@
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const axios = require('axios');
 require('dotenv').config();
 
-// Initialize Gemini API
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+// Gemini API configuration
+const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent";
 
 // Model configuration
 const modelConfig = {
@@ -19,7 +19,7 @@ const safetySettings = [
     threshold: "BLOCK_MEDIUM_AND_ABOVE",
   },
   {
-    category: "HARM_CATEGORY_HATE_SPEECH",
+    category: "HARM_CATEGORY_HATE_SPEECH", 
     threshold: "BLOCK_MEDIUM_AND_ABOVE",
   },
   {
@@ -32,32 +32,19 @@ const safetySettings = [
   },
 ];
 
-// Get Gemini model
-function getModel() {
-  return genAI.getGenerativeModel({
-    model: "gemini-2.5-flash",  // Updated model name (gemini-pro deprecated)
-    generationConfig: modelConfig,
-    safetySettings: safetySettings,
-  });
-}
-
 // Generate AI response with chat history
 async function generateResponse(userMessage, systemPrompt, chatHistory = []) {
   try {
-    const model = getModel();
-    
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      throw new Error("Missing GEMINI_API_KEY in environment");
+    }
+
     // Build conversation history
     const history = chatHistory.map(msg => ({
       role: msg.role === 'user' ? 'user' : 'model',
       parts: [{ text: msg.content }]
     }));
-
-    // Start chat with history
-    const chat = model.startChat({
-      history: history,
-      generationConfig: modelConfig,
-      safetySettings: safetySettings,
-    });
 
     // Combine system prompt with user message
     const vietnameseInstruction = "QUAN TRỌNG: Trả lời bằng tiếng Việt. Không bao giờ trả lời bằng tiếng Anh.\n\n";
@@ -65,9 +52,36 @@ async function generateResponse(userMessage, systemPrompt, chatHistory = []) {
       ? `${vietnameseInstruction}${systemPrompt}\n\nTin nhắn từ khách hàng: ${userMessage}`
       : `${vietnameseInstruction}Tin nhắn từ khách hàng: ${userMessage}`;
 
-    const result = await chat.sendMessage(fullPrompt);
-    const response = await result.response;
-    const text = response.text();
+    // Prepare request payload
+    const requestPayload = {
+      contents: [
+        ...history,
+        {
+          role: "user",
+          parts: [{ text: fullPrompt }]
+        }
+      ],
+      generationConfig: modelConfig,
+      safetySettings: safetySettings
+    };
+
+    // Call Gemini API
+    const response = await axios.post(
+      `${GEMINI_API_URL}?key=${apiKey}`,
+      requestPayload,
+      {
+        headers: {
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    // Extract response text
+    const text = response.data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "";
+
+    if (!text) {
+      throw new Error("Empty response from Gemini API");
+    }
 
     return {
       success: true,
@@ -75,7 +89,7 @@ async function generateResponse(userMessage, systemPrompt, chatHistory = []) {
       error: null
     };
   } catch (error) {
-    console.error('❌ Gemini API error:', error.message);
+    console.error('❌ Gemini API error:', error.response?.data || error.message);
     return {
       success: false,
       response: null,
@@ -87,16 +101,45 @@ async function generateResponse(userMessage, systemPrompt, chatHistory = []) {
 // Generate response without history (simple mode)
 async function generateSimpleResponse(userMessage, systemPrompt) {
   try {
-    const model = getModel();
-    
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      throw new Error("Missing GEMINI_API_KEY in environment");
+    }
+
     const vietnameseInstruction = "QUAN TRỌNG: Trả lời bằng tiếng Việt. Không bao giờ trả lời bằng tiếng Anh.\n\n";
     const fullPrompt = systemPrompt 
       ? `${vietnameseInstruction}${systemPrompt}\n\nTin nhắn từ khách hàng: ${userMessage}`
       : `${vietnameseInstruction}Tin nhắn từ khách hàng: ${userMessage}`;
 
-    const result = await model.generateContent(fullPrompt);
-    const response = await result.response;
-    const text = response.text();
+    // Prepare request payload
+    const requestPayload = {
+      contents: [
+        {
+          role: "user",
+          parts: [{ text: fullPrompt }]
+        }
+      ],
+      generationConfig: modelConfig,
+      safetySettings: safetySettings
+    };
+
+    // Call Gemini API
+    const response = await axios.post(
+      `${GEMINI_API_URL}?key=${apiKey}`,
+      requestPayload,
+      {
+        headers: {
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    // Extract response text
+    const text = response.data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "";
+
+    if (!text) {
+      throw new Error("Empty response from Gemini API");
+    }
 
     return {
       success: true,
@@ -104,7 +147,7 @@ async function generateSimpleResponse(userMessage, systemPrompt) {
       error: null
     };
   } catch (error) {
-    console.error('❌ Gemini API error:', error.message);
+    console.error('❌ Gemini API error:', error.response?.data || error.message);
     return {
       success: false,
       response: null,
@@ -115,7 +158,6 @@ async function generateSimpleResponse(userMessage, systemPrompt) {
 
 module.exports = {
   generateResponse,
-  generateSimpleResponse,
-  getModel
+  generateSimpleResponse
 };
 
