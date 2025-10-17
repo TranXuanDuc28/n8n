@@ -1,8 +1,7 @@
-const { Engagement } = require('../models');
- const MS = 1000;
-  const { PlatformPost } = require('../models');
-  const SocialService = require('../services/social.service');
-  const EngagementService = require('../services/engagement.service');
+const { Engagement, PlatformPost } = require('../models');
+const MS = 1000;
+const SocialService = require('../services/social.service');
+const EngagementService = require('../services/engagement.service');
 
 class EngagementController {
   async updateEngagementFromData(data) {
@@ -78,7 +77,19 @@ class EngagementController {
       };
 
       const result = await EngagementService.updateEngagementFromData(payload);
-      console.log(`Engagement updated for ${pp.platform} ${pp.platform_post_id}`);
+      
+      // Đánh dấu PlatformPost đã được checked
+      await PlatformPost.update(
+        { checked: true },
+        { 
+          where: { 
+            platform_post_id: pp.platform_post_id,
+            platform: pp.platform
+          }
+        }
+      );
+      
+      console.log(`Engagement updated and marked as checked for ${pp.platform} ${pp.platform_post_id}`);
       return result;
     } catch (err) {
       console.warn(`Failed to fetch/process engagement for ${pp.platform_post_id}:`, err.message);
@@ -99,20 +110,33 @@ class EngagementController {
     for (const pp of postData.platformPosts) {
       if (!pp.platform_post_id) continue;
 
-      // Kiểm tra lần cập nhật cuối cùng
-      const lastEng = await Engagement.findOne({
-        where: { platform_post_id: pp.platform_post_id },
-        order: [['last_checked_at', 'DESC']]
+      // Kiểm tra xem PlatformPost đã được checked chưa
+      const platformPost = await PlatformPost.findOne({
+        where: { 
+          platform_post_id: pp.platform_post_id,
+          platform: pp.platform
+        }
       });
 
-      if (
-        lastEng &&
-        lastEng.last_checked_at &&
-        new Date(lastEng.last_checked_at) > new Date(pp.published_at)
-      ) {
-        console.log(`⏩ Skipped ${pp.platform} ${pp.platform_post_id} (already up-to-date)`);
+      if (platformPost && platformPost.checked) {
+        console.log(`⏩ Skipped ${pp.platform} ${pp.platform_post_id} (already checked)`);
         continue;
       }
+
+      // Kiểm tra lần cập nhật cuối cùng (fallback check)
+      // const lastEng = await Engagement.findOne({
+      //   where: { platform_post_id: pp.platform_post_id },
+      //   order: [['last_checked_at', 'DESC']]
+      // });
+
+      // if (
+      //   lastEng &&
+      //   lastEng.last_checked_at &&
+      //   new Date(lastEng.last_checked_at) > new Date(pp.published_at)
+      // ) {
+      //   console.log(`⏩ Skipped ${pp.platform} ${pp.platform_post_id} (already up-to-date)`);
+      //   continue;
+      // }
 
       // Xử lý bài post
       const result = await this.processPlatformPost(pp);

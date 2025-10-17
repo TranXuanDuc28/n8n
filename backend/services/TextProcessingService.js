@@ -1,4 +1,5 @@
-const db = require('../config/database');
+const { SpamPattern, CommentAnalysis } = require('../models');
+const { Op } = require('sequelize');
 
 class TextProcessingService {
   // Remove emojis
@@ -69,8 +70,7 @@ class TextProcessingService {
   static async isSpam(text) {
     try {
       // Load spam patterns từ database
-      const sql = 'SELECT pattern_type, pattern_value FROM spam_patterns WHERE is_active = TRUE';
-      const patterns = await db.query(sql);
+      const patterns = await SpamPattern.findAll({ where: { is_active: true }, attributes: ['pattern_type','pattern_value'], raw: true });
 
       const lowerText = text.toLowerCase();
 
@@ -135,17 +135,17 @@ class TextProcessingService {
       const cleanedText = this.cleanText(text);
       
       // Check exact match
-      const sql = `
-        SELECT comment_id, original_message 
-        FROM comment_analysis 
-        WHERE cleaned_message = ? 
-        AND comment_id != ?
-        AND analyzed_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
-        LIMIT 1
-      `;
-      
-      const results = await db.query(sql, [cleanedText, commentId]);
-      
+      const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+      const results = await CommentAnalysis.findAll({
+        where: {
+          cleaned_message: cleanedText,
+          comment_id: { [Op.ne]: commentId },
+          analyzed_at: { [Op.gte]: since }
+        },
+        attributes: ['comment_id','original_message'],
+        limit: 1,
+        raw: true
+      });
       if (results.length > 0) {
         return {
           isDuplicate: true,

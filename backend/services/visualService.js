@@ -3,6 +3,7 @@ const sharp = require('sharp');
 const fs = require('fs').promises;
 const path = require('path');
 const { Op } = require('sequelize');
+const TimezoneUtils = require('../utils/timezone');
 
 const { Visual, AbTest, AbTestVariant } = require('../models');
 
@@ -176,17 +177,26 @@ static async generateBanner(prompt, size = '1200x630', variants = 1) {
 
     return variants;
   }
-  static async listToCheck() {
+  static async listToCheck(checkTime = null) {
   console.log('Fetching A/B tests to check...');
   try {
-    const now = new Date();
-    const twentyFourHoursAgo = new Date(now - 2 * 60 * 1000); // ví dụ 3 phút
-    console.log('Checking for tests started before:', twentyFourHoursAgo);
+    let timeToCheck;
+    
+    if (checkTime) {
+      // Sử dụng thời gian từ FE và convert sang Vietnam timezone
+      timeToCheck = TimezoneUtils.createVietnamDate(checkTime);
+      console.log('Using checkTime from FE (Vietnam time):', timeToCheck);
+    } else {
+      // Fallback về thời gian mặc định nếu không có input (2 phút trước)
+      timeToCheck = TimezoneUtils.subtract(TimezoneUtils.now(), 2, 'minutes').toDate();
+      console.log('Using default checkTime (Vietnam time):', timeToCheck);
+    }
 
     let abTests = await AbTest.findAll({
       where: {
-        checked: false,
-        startedAt: { [Op.lte]: twentyFourHoursAgo }
+        checked: true,
+        status: 'running',
+        scheduledAt: { [Op.lte]: timeToCheck }
       },
       attributes: ['id', 'notifyEmail']
     });
@@ -202,6 +212,194 @@ static async generateBanner(prompt, size = '1200x630', variants = 1) {
     return { error: err.message };
   }
 }
+
+  // Lấy Active A/B Tests
+  static async getActiveAbTests() {
+    try {
+      const activeTests = await AbTest.findAll({
+        where: {
+          status: 'running',
+          scheduledAt: { [Op.lte]: new Date() }
+        },
+        include: [
+          {
+            model: AbTestVariant,
+            as: 'variants'
+          }
+        ],
+        order: [['scheduledAt', 'DESC']]
+      });
+
+      return activeTests.map(test => ({
+        id: test.id,
+        type: test.data?.type || 'banner',
+        projectId: test.projectId,
+        status: test.status,
+        scheduledAt: test.scheduledAt,
+        createdAt: test.createdAt,
+        variantCount: test.variants?.length || 0,
+        notifyEmail: test.notifyEmail
+      }));
+    } catch (error) {
+      console.error('Error fetching active A/B tests:', error);
+      return [];
+    }
+  }
+
+  // Lấy Currently running tests
+  static async getRunningTests() {
+    try {
+      const runningTests = await AbTest.findAll({
+        where: {
+          status: 'running'
+        },
+        include: [
+          {
+            model: AbTestVariant,
+            as: 'variants'
+          }
+        ],
+        order: [['createdAt', 'DESC']]
+      });
+
+      return runningTests.map(test => ({
+        id: test.id,
+        type: test.data?.type || 'banner',
+        projectId: test.projectId,
+        status: test.status,
+        scheduledAt: test.scheduledAt,
+        createdAt: test.createdAt,
+        variantCount: test.variants?.length || 0,
+        notifyEmail: test.notifyEmail,
+        platformPostIds: test.platformPostIds || []
+      }));
+    } catch (error) {
+      console.error('Error fetching running tests:', error);
+      return [];
+    }
+  }
+
+  // Lấy A/B Test Results
+  static async getAbTestResults() {
+    try {
+      const completedTests = await AbTest.findAll({
+        where: {
+          status: 'completed'
+        },
+        include: [
+          {
+            model: AbTestVariant,
+            as: 'variants'
+          }
+        ],
+        order: [['completedAt', 'DESC']]
+      });
+
+      return completedTests.map(test => ({
+        id: test.id,
+        type: test.data?.type || 'banner',
+        projectId: test.projectId,
+        status: test.status,
+        completedAt: test.completedAt,
+        bestVariantId: test.bestVariantId,
+        variantCount: test.variants?.length || 0,
+        variants: test.variants?.map(variant => ({
+          id: variant.id,
+          imageUrl: variant.imageUrl,
+          postId: variant.postId,
+          metrics: variant.metrics || {}
+        })) || []
+      }));
+    } catch (error) {
+      console.error('Error fetching A/B test results:', error);
+      return [];
+    }
+  }
+
+  // Lấy Performance analytics and insights
+  static async getPerformanceAnalytics() {
+    try {
+      // Lấy tổng số tests
+      const totalTests = await AbTest.count();
+      const runningTests = await AbTest.count({ where: { status: 'running' } });
+      const completedTests = await AbTest.count({ where: { status: 'completed' } });
+
+      // Lấy metrics tổng hợp
+      const completedTestsWithVariants = await AbTest.findAll({
+        where: { status: 'completed' },
+        include: [
+          {
+            model: AbTestVariant,
+            as: 'variants'
+          }
+        ]
+      });
+
+      let totalEngagement = 0;
+      let totalReach = 0;
+      let totalLikes = 0;
+      let totalComments = 0;
+      let totalShares = 0;
+
+      completedTestsWithVariants.forEach(test => {
+        test.variants?.forEach(variant => {
+          if (variant.metrics) {
+            const metrics = typeof variant.metrics === 'string' 
+              ? JSON.parse(variant.metrics) 
+              : variant.metrics;
+            
+            totalEngagement += metrics.engagementScore || 0;
+            totalReach += metrics.reach || 0;
+            totalLikes += metrics.likes || 0;
+            totalComments += metrics.comments || 0;
+            totalShares += metrics.shares || 0;
+          }
+        });
+      });
+
+      // Tính trung bình
+      const variantCount = completedTestsWithVariants.reduce((sum, test) => 
+        sum + (test.variants?.length || 0), 0);
+
+      return {
+        overview: {
+          totalTests,
+          runningTests,
+          completedTests,
+          averageEngagement: variantCount > 0 ? (totalEngagement / variantCount).toFixed(2) : 0,
+          averageReach: variantCount > 0 ? (totalReach / variantCount).toFixed(0) : 0
+        },
+        metrics: {
+          totalEngagement: totalEngagement.toFixed(2),
+          totalReach: totalReach.toFixed(0),
+          totalLikes: totalLikes.toFixed(0),
+          totalComments: totalComments.toFixed(0),
+          totalShares: totalShares.toFixed(0)
+        },
+        topPerformers: completedTestsWithVariants
+          .sort((a, b) => {
+            const aMax = Math.max(...(a.variants?.map(v => v.metrics?.engagementScore || 0) || [0]));
+            const bMax = Math.max(...(b.variants?.map(v => v.metrics?.engagementScore || 0) || [0]));
+            return bMax - aMax;
+          })
+          .slice(0, 5)
+          .map(test => ({
+            id: test.id,
+            type: test.data?.type || 'banner',
+            projectId: test.projectId,
+            maxEngagement: Math.max(...(test.variants?.map(v => v.metrics?.engagementScore || 0) || [0])),
+            completedAt: test.completedAt
+          }))
+      };
+    } catch (error) {
+      console.error('Error fetching performance analytics:', error);
+      return {
+        overview: { totalTests: 0, runningTests: 0, completedTests: 0, averageEngagement: 0, averageReach: 0 },
+        metrics: { totalEngagement: 0, totalReach: 0, totalLikes: 0, totalComments: 0, totalShares: 0 },
+        topPerformers: []
+      };
+    }
+  }
 
 }
 

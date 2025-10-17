@@ -2,6 +2,7 @@ const { Post } = require('../models');
 const n8nService = require('../services/n8n.service');
 const PostsService = require('../services/posts.service');
 const { generateEmbedding } = require('../services/gemini.service');
+const TimezoneUtils = require('../utils/timezone');
 
 class PostsController {
   async getUnpublishedPosts(req, res) {
@@ -34,8 +35,8 @@ class PostsController {
   // GET /api/get-all-posts
   async getAllPosts(req, res) {
     try {
-      const posts = await PostsService.getAllPosts();
-      res.json(posts);
+      const result = await PostsService.getAllPosts();
+      res.json(result.posts || result);
     } catch (error) {
       res.status(500).json({
         success: false,
@@ -87,7 +88,9 @@ class PostsController {
   // GET /api/list-to-check
   async getPostsToCheck(req, res) {
     try {
-      const posts = await PostsService.getPostsToCheck();
+      const { checkTime } = req.body; // Nhận thời gian từ FE
+      console.log('checkTime', checkTime);  
+      const posts = await PostsService.getPostsToCheck(checkTime);
 
       res.json(posts);
     } catch (error) {
@@ -112,7 +115,7 @@ class PostsController {
         });
       }
 
-      // Create post in database
+      // Create post in database with Vietnam timezone
       const newPost = await Post.create({
         title,
         content,
@@ -121,13 +124,14 @@ class PostsController {
         media: media || null,
         platform: Array.isArray(platform) ? platform.join(',') : platform,
         status: scheduledAt ? 'scheduled' : 'pending',
-        published_at: scheduledAt ? new Date(scheduledAt) : null,
-        created_at: new Date(),
-        updated_at: new Date()
+        published_at: scheduledAt ? TimezoneUtils.createVietnamDate(scheduledAt) : null,
+        created_at: TimezoneUtils.now().toDate(),
+        updated_at: TimezoneUtils.now().toDate()
       });
 
       // Trigger n8n workflow
       const n8nPayload = {
+        category: "content_management",
         postId: newPost.id,
         title: newPost.title,
         content: newPost.content,

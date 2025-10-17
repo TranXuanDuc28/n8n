@@ -12,6 +12,7 @@ const engagementController = require('../controllers/engagement.controller');
 const mailController = require('../controllers/mail.controller');
 const generateController = require('../controllers/generate.controller');
 const VisualController = require('../controllers/visualController');
+const ChatAIController = require('../controllers/ChatAIController');
 
 // Health check
 router.get('/health', (req, res) => {
@@ -55,7 +56,7 @@ router.post('/generate-content-gemini', postsController.generateContentWithGemin
 router.get('/posts/:postId', postsController.getPostById);
 router.get('/get-all-posts', postsController.getAllPosts);
 router.post('/posts/update-status', postsController.updatePostStatus);
-router.get('/list-to-check', postsController.getPostsToCheck);
+router.post('/list-to-check', postsController.getPostsToCheck);
 router.get('/unpublished-post', postsController.getUnpublishedPosts);
 
 // Thêm endpoint schedule-post
@@ -83,15 +84,34 @@ router.post('/save', VisualController.save);
 router.post('/ab-test/start', VisualController.startAbTest);
 router.post('/generate-carousel', VisualController.generateCarouselImages);
 router.post('/ab-test/check', VisualController.checkAbTest);
-router.get('/list-to-check-testing', VisualController.listToCheck);
+router.post('/list-to-check-testing', VisualController.listToCheck);
 
 // API gửi mail riêng
 router.post('/send-best-variant-email', VisualController.sendBestVariantEmail);
-// API kiểm tra startedAt trùng giờ hiện tại
+// API kiểm tra scheduledAt trùng giờ hiện tại
 router.get('/abtest/by-current-time', VisualController.getAbTestByCurrentTime);
 
 // API forward dữ liệu tới webhook
 router.post('/forward-to-webhook', VisualController.forwardToWebhook);
+
+// API lấy dữ liệu động cho dashboard
+router.get('/ab-test/active', VisualController.getActiveAbTests);
+router.get('/ab-test/running', VisualController.getRunningTests);
+router.get('/ab-test/results', VisualController.getAbTestResults);
+router.get('/ab-test/analytics', VisualController.getPerformanceAnalytics);
+
+// ChatAI routes
+const chatAIController = new ChatAIController();
+router.post('/chatai/ai-reply', (req, res) => chatAIController.aiReply(req, res));
+router.get('/chatai/users', (req, res) => chatAIController.getUsers(req, res));
+router.get('/chatai/users/:userId/conversations', (req, res) => chatAIController.getUserConversations(req, res));
+router.get('/chatai/responses', (req, res) => chatAIController.getResponses(req, res));
+router.post('/chatai/responses', (req, res) => chatAIController.addResponse(req, res));
+router.get('/chatai/analytics', (req, res) => chatAIController.getAnalytics(req, res));
+router.get('/chatai/stats', (req, res) => chatAIController.getStats(req, res));
+router.post('/chatai/test-ai', (req, res) => chatAIController.testAI(req, res));
+router.post('/chatai/refresh-dynamic-content', (req, res) => chatAIController.refreshDynamicContent(req, res));
+router.get('/chatai/posts-analysis', (req, res) => chatAIController.getPostsForAnalysis(req, res));
 
 module.exports = router;
 

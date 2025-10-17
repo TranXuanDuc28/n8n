@@ -69,6 +69,11 @@ module.exports = (sequelize) => {
     allowNull: true,
     defaultValue: null
   },
+  checked: {
+    type: DataTypes.BOOLEAN,
+    defaultValue: false,
+    comment: 'Đánh dấu đã lấy engagement data'
+  },
   created_at: {
     type: DataTypes.DATE,
     defaultValue: DataTypes.NOW

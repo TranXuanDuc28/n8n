@@ -1,43 +1,72 @@
 const axios = require('axios');
-const db = require('../config/database');
+const { ModerationLog, CommentAnalysis, FacebookComment } = require('../models');
+const { Op } = require('sequelize');
 const Logger = require('../utils/logger');
 
 class ModerationService {
   // Hide comment on Facebook
   static async hideComment(commentId) {
     try {
+      // Validate input
+      if (!commentId) {
+        throw new Error('Comment ID is required');
+      }
+
       const accessToken = process.env.FACEBOOK_ACCESS_TOKEN;
+      if (!accessToken) {
+        throw new Error('Facebook access token is not configured');
+      }
       
       const url = `https://graph.facebook.com/v23.0/${commentId}`;
+      console.log(`Attempting to hide comment: ${commentId}`);
+      
       const response = await axios.post(url, {
         is_hidden: true
       }, {
         headers: {
-          'Authorization': `Bearer ${accessToken}`
-        }
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 10000 // 10 second timeout
       });
 
-      // Log moderation action
-      await this.logModeration(commentId, 'hide', 'Spam detected', true);
+      console.log(`Facebook API response:`, response.status, response.data);
 
-      Logger.info('Comment hidden', { comment_id: commentId });
+      // Log moderation action
+      try {
+        await this.logModeration(commentId, 'hide', 'Spam detected', true);
+      } catch (logError) {
+        console.warn('Failed to log moderation action:', logError.message);
+      }
+
+      Logger.info('Comment hidden successfully', { comment_id: commentId });
 
       return {
         success: true,
-        message: 'Comment hidden successfully'
+        message: 'Comment hidden successfully',
+        data: response.data
       };
 
     } catch (error) {
-      await this.logModeration(commentId, 'hide', 'Spam detected', false, error.message);
+      console.error(`Failed to hide comment ${commentId}:`, error.message);
+      
+      // Try to log the error
+      try {
+        await this.logModeration(commentId, 'hide', 'Spam detected', false, error.message);
+      } catch (logError) {
+        console.warn('Failed to log moderation error:', logError.message);
+      }
       
       Logger.error('Failed to hide comment', { 
         comment_id: commentId, 
-        error: error.message 
+        error: error.message,
+        response: error.response?.data
       });
 
       return {
         success: false,
-        error: error.message
+        error: error.message,
+        details: error.response?.data || null
       };
     }
   }
@@ -120,27 +149,32 @@ class ModerationService {
   // Log moderation action
   static async logModeration(commentId, action, reason, success, errorMessage = null) {
     try {
-      const sql = `
-        INSERT INTO moderation_log 
-        (comment_id, action, reason, success, error_message)
-        VALUES (?, ?, ?, ?, ?)
-      `;
-
-      await db.query(sql, [commentId, action, reason, success, errorMessage]);
-
-      // Update comment_analysis
+      // Create moderation log
+      await ModerationLog.create({ 
+        comment_id: commentId, 
+        action, 
+        reason, 
+        success, 
+        error_message: errorMessage, 
+        performed_at: new Date() 
+      });
+      
+      // Update comment analysis if successful
       if (success) {
-        const updateSql = `
-          UPDATE comment_analysis
-          SET moderation_action = ?,
-              moderated_at = NOW()
-          WHERE comment_id = ?
-        `;
-        await db.query(updateSql, [action, commentId]);
+        await CommentAnalysis.update(
+          { 
+            moderation_action: action, 
+            moderated_at: new Date() 
+          }, 
+          { 
+            where: { comment_id: commentId } 
+          }
+        );
       }
 
     } catch (error) {
       console.error('Error logging moderation:', error.message);
+      // Don't throw error to avoid breaking the main flow
     }
   }
 
@@ -211,32 +245,27 @@ class ModerationService {
   // Get moderation queue
   static async getModerationQueue() {
     try {
-      const sql = `
-        SELECT 
-          fc.comment_id,
-          fc.from_name,
-          fc.message,
-          ca.toxic_category,
-          ca.toxic_score,
-          ca.moderation_action,
-          ca.is_spam,
-          fc.created_time
-        FROM facebook_comments fc
-        JOIN comment_analysis ca ON fc.comment_id = ca.comment_id
-        WHERE (ca.is_toxic = TRUE OR ca.is_spam = TRUE)
-        AND ca.moderation_action IN ('delete', 'hide')
-        AND ca.moderated_at IS NULL
-        ORDER BY ca.toxic_score DESC, fc.created_time DESC
-        LIMIT 100
-      `;
-
-      const results = await db.query(sql);
-
-      return {
-        success: true,
-        data: results,
-        count: results.length
-      };
+      const results = await CommentAnalysis.findAll({
+        where: {
+          moderated_at: null,
+          moderation_action: { [Op.in]: ['delete','hide'] },
+          [Op.or]: [{ is_toxic: true }, { is_spam: true }]
+        },
+        include: [{ model: FacebookComment, as: 'facebookComment', attributes: ['comment_id','from_name','message','created_time'] }],
+        order: [['toxic_score','DESC']],
+        limit: 100
+      });
+      const data = results.map(r => ({
+        comment_id: r.comment_id,
+        from_name: r.facebookComment?.from_name,
+        message: r.facebookComment?.message,
+        toxic_category: r.toxic_category,
+        toxic_score: r.toxic_score,
+        moderation_action: r.moderation_action,
+        is_spam: r.is_spam,
+        created_time: r.facebookComment?.created_time
+      }));
+      return { success: true, data, count: data.length };
 
     } catch (error) {
       Logger.error('Error getting moderation queue', { error: error.message });

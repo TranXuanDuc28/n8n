@@ -1,6 +1,5 @@
-const Comment = require('../models/Comment');
-const ChatHistory = require('../models/ChatHistory');
-const AIPrompt = require('../models/AIPrompt');
+const { FacebookPost, FacebookComment, HandledComment, ChatHistory } = require('../models');
+const AIPromptService = require('./AIPromptService');
 const { generateResponse } = require('../config/gemini'); // Đảm bảo file gemini.js là bản đã sửa
 const Logger = require('../utils/logger');
 const SentimentAnalysisService = require('./SentimentAnalysisService');
@@ -14,7 +13,7 @@ class CommentService {
       for (const comment of commentsData) {
         try {
           // Kiểm tra comment đã xử lý chưa
-          const isHandled = await Comment.isHandled(comment.comment_id);
+          const isHandled = await HandledComment.findOne({ where: { comment_id: comment.comment_id } });
           if (isHandled) {
             results.skipped.push({
               comment_id: comment.comment_id,
@@ -24,15 +23,17 @@ class CommentService {
           }
 
           // Lưu comment mới vào DB
-          await Comment.saveComment({
+          await FacebookComment.upsert({
             comment_id: comment.comment_id,
             post_id: comment.post_id,
             parent_comment_id: comment.parent_comment_id || null,
             from_id: comment.from_id,
             from_name: comment.from_name,
+            is_from_page: !!comment.is_from_page,
             message: comment.message,
-            created_time: comment.created_time,
-            comment_level: comment.comment_level || 1
+            created_time: new Date(comment.created_time),
+            comment_level: parseInt(comment.comment_level) || 1,
+            fetched_at: new Date()
           });
 
           // 🔎 Phân tích cảm xúc & spam
@@ -117,7 +118,11 @@ class CommentService {
   // 🧠 Sinh phản hồi từ AI với ngữ cảnh
   static async generateAIResponse(userMessage, userName, userId, postId, sessionId, workflowData = {}) {
     try {
-      const postContent = await Comment.getPostContent(postId);
+      let postContent = '';
+      if (postId) {
+        const post = await FacebookPost.findOne({ where: { post_id: postId } });
+        postContent = post?.content || '';
+      }
 
       const templateData = {
         content: postContent,
@@ -129,12 +134,14 @@ class CommentService {
         ...workflowData
       };
 
-      const systemPrompt = await AIPrompt.getProcessedPrompt('default_watch_sales', templateData);
+      const systemPrompt = await AIPromptService.getProcessedPrompt('default_watch_sales', templateData);
 
       console.log('🔍 Template Data:', JSON.stringify(templateData, null, 2));
       console.log('🔍 Processed System Prompt:', systemPrompt);
 
-      const history = await ChatHistory.getHistory(sessionId, 20);
+      // Retrieve last 20 chat messages for session
+      const rows = await ChatHistory.findAll({ where: { session_id: sessionId }, order: [['created_at', 'DESC']], limit: 20 });
+      const history = rows.reverse().map(r => [{ role: 'user', content: r.user_message }, { role: 'assistant', content: r.ai_response }]).flat();
 
       let contextMessage = userMessage;
       if (postContent) {
@@ -151,13 +158,14 @@ class CommentService {
       }
 
       // Lưu lịch sử chat
-      await ChatHistory.saveChat({
+      await ChatHistory.create({
         session_id: sessionId,
         user_id: userId,
         user_name: userName,
         user_message: userMessage,
         ai_response: aiResult.response,
-        context_data: { post_id: postId, post_content: postContent }
+        context_data: { post_id: postId, post_content: postContent },
+        created_at: new Date()
       });
 
       return { success: true, response: aiResult.response };
@@ -174,7 +182,13 @@ class CommentService {
       const results = [];
       for (const item of handledData) {
         try {
-          await Comment.markAsHandled(item.comment_id, item.reply_id || null, item.ai_response, item.session_id);
+          await HandledComment.upsert({
+            comment_id: item.comment_id,
+            reply_id: item.reply_id || null,
+            ai_response: item.ai_response,
+            session_id: item.session_id || null,
+            handled_at: new Date()
+          });
           results.push({ comment_id: item.comment_id, status: 'success' });
         } catch (error) {
           results.push({ comment_id: item.comment_id, status: 'error', error: error.message });
@@ -190,7 +204,7 @@ class CommentService {
   // ✅ Kiểm tra 1 comment đã xử lý chưa
   static async checkSingleCommentHandled(commentId, sessionId) {
     try {
-      const isHandled = await Comment.isHandled(commentId);
+      const isHandled = !!(await HandledComment.findOne({ where: { comment_id: commentId } }));
       return { success: true, comment_id: commentId, is_handled: isHandled, session_id: sessionId };
     } catch (error) {
       Logger.error('CheckSingleCommentHandled error', { error: error.message });
@@ -201,11 +215,9 @@ class CommentService {
   // ✅ Kiểm tra nhiều comment
   static async checkHandledStatus(commentIds) {
     try {
-      const results = [];
-      for (const commentId of commentIds) {
-        const isHandled = await Comment.isHandled(commentId);
-        results.push({ comment_id: commentId, is_handled: isHandled });
-      }
+      const handled = await HandledComment.findAll({ where: { comment_id: commentIds } });
+      const handledSet = new Set(handled.map(h => h.comment_id));
+      const results = commentIds.map(id => ({ comment_id: id, is_handled: handledSet.has(id) }));
       return { success: true, data: results };
     } catch (error) {
       Logger.error('CheckHandledStatus error', { error: error.message });
@@ -216,8 +228,14 @@ class CommentService {
   // ✅ Lấy comment chưa xử lý
   static async getUnhandledComments(limit = 100) {
     try {
-      const comments = await Comment.getUnhandledComments(limit);
-      return { success: true, data: comments, count: comments.length };
+      const comments = await FacebookComment.findAll({
+        where: {},
+        include: [{ model: HandledComment, as: 'handled', required: false }],
+        order: [['created_time', 'DESC']],
+        limit
+      });
+      const unhandled = comments.filter(c => !c.handled);
+      return { success: true, data: unhandled, count: unhandled.length };
     } catch (error) {
       Logger.error('GetUnhandledComments error', { error: error.message });
       return { success: false, error: error.message };
@@ -230,11 +248,12 @@ class CommentService {
       const results = [];
       for (const post of postsData) {
         try {
-          await Comment.savePost({
+          await FacebookPost.upsert({
             post_id: post.post_id || post.id,
             page_id: post.page_id,
             content: post.content || post.message || '',
-            created_time: post.created_time
+            created_time: new Date(post.created_time),
+            fetched_at: new Date()
           });
           results.push({ post_id: post.post_id || post.id, status: 'success' });
         } catch (error) {

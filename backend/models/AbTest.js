@@ -2,6 +2,10 @@ const { DataTypes } = require('sequelize');
 
 module.exports = (sequelize) => {
     const AbTest = sequelize.define('AbTest', {
+        type: {
+            type: DataTypes.STRING,
+            allowNull: true
+        },
         projectId: {
             type: DataTypes.STRING,
             allowNull: false
@@ -19,7 +23,7 @@ module.exports = (sequelize) => {
             type: DataTypes.STRING,
             allowNull: true
         },
-        startedAt: {
+        scheduledAt: {
             type: DataTypes.DATE,
             allowNull: true,
             defaultValue: DataTypes.NOW
@@ -29,6 +33,10 @@ module.exports = (sequelize) => {
             allowNull: true
         },
         platformPostIds: {
+            type: DataTypes.JSON,
+            allowNull: true
+        },
+        slides: {
             type: DataTypes.JSON,
             allowNull: true
         },

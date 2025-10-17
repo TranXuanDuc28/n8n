@@ -2,6 +2,7 @@ const VisualService = require('../services/visualService');
 const FacebookService = require('../services/facebookService');
 const EmailService = require('../services/emailService');
 const { Visual, AbTest, AbTestVariant } = require('../models');
+const TimezoneUtils = require('../utils/timezone');
 const dayjs = require('dayjs');
 const timezone = require('dayjs/plugin/timezone');
 const utc = require('dayjs/plugin/utc');
@@ -12,16 +13,18 @@ const { Op } = require('sequelize');
 
 
 class VisualController {
-  // API kiểm tra startedAt trùng giờ hiện tại
+  // API kiểm tra scheduledAt trùng giờ hiện tại
   static async getAbTestByCurrentTime(req, res) {
     try {
-      const nowVN = dayjs().tz('Asia/Ho_Chi_Minh');
+      const nowVN = TimezoneUtils.now();
       const startOfMinute = nowVN.startOf('minute').toDate();
       const endOfMinute = nowVN.endOf('minute').toDate();
 
       const abTests = await AbTest.findAll({
         where: {
-          startedAt: {
+          checked: false,
+          status: 'running',
+          scheduledAt: {
             [Op.between]: [startOfMinute, endOfMinute]
           }
         }
@@ -40,7 +43,7 @@ class VisualController {
           type: test.data.type,
           projectId: test.projectId,
           variantCount: test.data.variantCount,
-          startedAt: test.startedAt ? dayjs(test.startedAt).format('YYYY-MM-DD HH:mm:ss') : null,
+          scheduledAt: test.scheduledAt ? TimezoneUtils.formatVietnamTime(test.scheduledAt) : null,
           abTestId: test.id
         };
 
@@ -86,14 +89,14 @@ static async forwardToWebhook(req, res) {
   try {
     const data = req.body;
 
-    // Convert startedAt sang Date object đúng giờ VN
+    // Convert scheduledAt sang Date object đúng giờ VN
     
-    let startedAt = null;
-    if (data.startedAt) {
-      startedAt = dayjs.tz(data.startedAt, "Asia/Ho_Chi_Minh").toDate();
-      console.log('Converted startedAt:', startedAt);
+    let scheduledAt = null;
+    if (data.scheduledAt) {
+      scheduledAt = TimezoneUtils.createVietnamDate(data.scheduledAt);
+      console.log('Converted scheduledAt to Vietnam time:', scheduledAt);
     } else {
-      console.log('startedAt is null, will store null in DB');
+      console.log('scheduledAt is null, will store null in DB');
     }
 
     const createdAbTests = []; // lưu tất cả bản ghi mới
@@ -115,7 +118,7 @@ static async forwardToWebhook(req, res) {
         type: data.type,
         projectId: data.projectId,
         data: jsonData,
-        startedAt,
+        scheduledAt,
         status: 'running',
         notifyEmail: data.notifyEmail || null,
         slides: null
@@ -149,7 +152,7 @@ static async forwardToWebhook(req, res) {
       const abTest = await AbTest.create({
           projectId: data.projectId,
           data: jsonData,
-          startedAt,
+          scheduledAt,
           status: 'running',
           notifyEmail: data.notifyEmail || null,
           slides: data.slides // lưu nguyên mảng slides
@@ -167,7 +170,7 @@ static async forwardToWebhook(req, res) {
     }
 
     // Forward **1 lần duy nhất** cho carousel
-    const webhookUrl = 'https://n8n.nhom8.id.vn/webhook-test/create-visual';
+    const webhookUrl = 'https://n8n.nhom8.id.vn/webhook-test/8bf7bb62-0884-405f-87d8-533b7de85b28';
     await axios.post(webhookUrl, responseData, {
       headers: { 'Content-Type': 'application/json' }
     });
@@ -400,7 +403,7 @@ static async forwardToWebhook(req, res) {
         // Cập nhật platformPostIds (gộp vào mảng cũ nếu đã có)
         const currentPostIds = abTest.platformPostIds || [];
         await abTest.update({
-          startedAt: new Date(),
+          scheduledAt: new Date(),
           platformPostIds: [...currentPostIds, postId]
         });
       }
@@ -419,7 +422,8 @@ static async forwardToWebhook(req, res) {
 
       // Lưu tất cả postId vào abTest
       await abTest.update({
-        startedAt: new Date(),
+        scheduledAt: new Date(),
+        checked: true,
         platformPostIds: createdVariants.map(v => v.postId)
       });
 
@@ -437,7 +441,8 @@ static async forwardToWebhook(req, res) {
 
   static async listToCheck(req, res) {
     try {
-      const result = await VisualService.listToCheck();
+      const { checkTime } = req.body; // Nhận thời gian từ FE
+      const result = await VisualService.listToCheck(checkTime);
       res.json({ success: true, result});
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -458,9 +463,13 @@ static async checkAbTest(req, res) {
     const responses = [];
 
     for (const t of tests) {
-      // Lấy tất cả abTest liên quan
+      // Lấy tất cả abTest liên quan, chỉ những tests chưa được checked
       const abTests = await AbTest.findAll({
-        where: { id: t.id },
+        where: { 
+          id: t.id,
+          checked: true, // Chỉ lấy những tests chưa được checked
+          status: 'running',
+        },
         include: [{ model: AbTestVariant, as: 'variants' }]
       });
 
@@ -505,7 +514,7 @@ static async checkAbTest(req, res) {
           await abTest.update({
             status: 'completed',
              bestVariantId: bestVariants.map(v => v.id).join(','),
-            completedAt: new Date(),
+            completedAt: TimezoneUtils.now().toDate(),
             checked: true
           });
         }
@@ -530,6 +539,46 @@ static async checkAbTest(req, res) {
     res.status(500).json({ error: error.message });
   }
 }
+
+  // API để lấy Active A/B Tests
+  static async getActiveAbTests(req, res) {
+    try {
+      const activeTests = await VisualService.getActiveAbTests();
+      res.json({ success: true, data: activeTests });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+
+  // API để lấy Currently running tests
+  static async getRunningTests(req, res) {
+    try {
+      const runningTests = await VisualService.getRunningTests();
+      res.json({ success: true, data: runningTests });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+
+  // API để lấy A/B Test Results
+  static async getAbTestResults(req, res) {
+    try {
+      const results = await VisualService.getAbTestResults();
+      res.json({ success: true, data: results });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+
+  // API để lấy Performance analytics and insights
+  static async getPerformanceAnalytics(req, res) {
+    try {
+      const analytics = await VisualService.getPerformanceAnalytics();
+      res.json({ success: true, data: analytics });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  }
 
 
 

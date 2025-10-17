@@ -10,7 +10,16 @@
         "init-sentiment": "node scripts/init-sentiment-tables.js",
         "init-toxic": "node scripts/init-toxic-tables.js",
         "init-all": "npm run init-db && npm run init-sentiment && npm run init-toxic",
-        "fix-handled": "node scripts/fix-handled-comments.js"
+        "init-sequelize": "node scripts/init-sequelize-db.js",
+        "fix-handled": "node scripts/fix-handled-comments.js",
+        "seed": "node seeders/index.js",
+        "seed:ai-prompts": "node -e \"require('./seeders/ai-prompts-seeder.js')()\"",
+        "seed:spam-patterns": "node -e \"require('./seeders/spam-patterns-seeder.js')()\"",
+        "seed:sentiment": "node -e \"require('./seeders/sentiment-keywords-seeder.js')()\"",
+        "seed:toxic": "node -e \"require('./seeders/toxic-keywords-seeder.js')()\"",
+        "seed:chatai": "node -e \"require('./seeders/chatai-responses-seeder.js')()\"",
+        "db:setup": "npm run seed",
+        "db:reset": "npm run seed"
     },
     "dependencies": {
         "@google/generative-ai": "^0.1.3",

@@ -81,6 +81,8 @@ class SocialService {
   
       const creationId = mediaRes.data.id;
       console.log("creationId", creationId);
+      // ✅ chờ 2 giây cho media sẵn sàng
+      await new Promise(r => setTimeout(r, 2000));
   
       // 2. Publish media
       const publishRes = await axios.post(

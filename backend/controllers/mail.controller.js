@@ -17,9 +17,9 @@ class MailController {
 
   async sendMail(req, res) {
     try {
-      const { to, subject, text, html } = req.body;
+      const { to, subject, html } = req.body;
 
-      if (!to || !subject || (!text && !html)) {
+      if (!to || !subject || !html) {
         return res.status(400).json({
           success: false,
           message: 'to, subject, and text/html are required'
@@ -30,7 +30,6 @@ class MailController {
         from: process.env.EMAIL_USER,
         to,
         subject,
-        text,
         html
       };
 

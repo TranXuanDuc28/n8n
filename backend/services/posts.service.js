@@ -3,6 +3,7 @@ const { Op } = require('sequelize');
 require('dotenv').config();
 const axios = require("axios");
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const TimezoneUtils = require('../utils/timezone');
 
 class PostsService {
 
@@ -197,8 +198,8 @@ class PostsService {
       const statusData = {
         status,
         platform_post_id: post_id,
-        published_at: status === 'published' ? new Date() : null,
-        updated_at: new Date()
+        published_at: status === 'published' ? TimezoneUtils.now().toDate() : null,
+        updated_at: TimezoneUtils.now().toDate()
       };
 
       const [updatedRowsCount] = await Post.update(statusData, {
@@ -213,9 +214,21 @@ class PostsService {
       // Also persist a PlatformPost record for tracking per-platform posts
       try {
         if (post_id) {
+          // Determine platform from input or fallback
+          const platform = (typeof status === 'string' && status.includes(':'))
+            ? status.split(':')[1]
+            : null;
+
+          // Fetch post to pull content/platform if needed
+          const parentPost = await Post.findByPk(postId);
+
           await PlatformPost.create({
             post_id: postId,
             platform_post_id: post_id,
+            platform: platform || (Array.isArray(parentPost?.platform) ? parentPost.platform[0] : (typeof parentPost?.platform === 'string' ? (function(p){
+              try { const parsed = JSON.parse(p); return Array.isArray(parsed) ? parsed[0] : p; } catch(e){ return (p.includes(',') ? p.split(',')[0].trim() : p); }
+            })(parentPost.platform) : 'facebook')),
+            content: parentPost?.content || '',
             status,
             published_at: status === 'published' ? new Date() : null,
             metadata: null,
@@ -246,14 +259,26 @@ class PostsService {
     }
   }
 
-  async getPostsToCheck() {
+  async getPostsToCheck(checkTime = null) {
+    console.log('getPostsToCheck called with checkTime:', checkTime);
     try {
-      const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
+      let timeToCheck;
+      
+      if (checkTime) {
+        // Sử dụng thời gian từ FE và convert sang Vietnam timezone
+        timeToCheck = TimezoneUtils.createVietnamDate(checkTime);
+        console.log('Using checkTime from FE (Vietnam time):', timeToCheck);
+      } else {
+        // Fallback về thời gian mặc định nếu không có input (15 phút trước)
+        timeToCheck = TimezoneUtils.subtract(TimezoneUtils.now(), 15, 'minutes').toDate();
+        console.log('Using default checkTime (Vietnam time):', timeToCheck);
+      }
+      
       const posts = await Post.findAll({
         where: {
           status: 'published',
           published_at: {
-            [Op.lte]: fifteenMinutesAgo
+            [Op.lte]: timeToCheck
           }
         },
         include: [
@@ -268,6 +293,7 @@ class PostsService {
         ],
         order: [['published_at', 'ASC']]
       });
+      console.log('posts', posts);
 
       return posts;
     } catch (error) {

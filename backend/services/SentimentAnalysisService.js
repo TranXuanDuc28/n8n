@@ -1,4 +1,5 @@
-const db = require('../config/database');
+const { SentimentKeyword, CommentAnalysis } = require('../models');
+const { Op } = require('sequelize');
 const TextProcessingService = require('./TextProcessingService');
 const ToxicDetectionService = require('./ToxicDetectionService');
 const ModerationService = require('./ModerationService');
@@ -10,8 +11,7 @@ class SentimentAnalysisService {
       const cleanedText = TextProcessingService.cleanText(text);
       
       // Load sentiment keywords từ database
-      const sql = 'SELECT keyword, sentiment, weight FROM sentiment_keywords';
-      const keywords = await db.query(sql);
+      const keywords = await SentimentKeyword.findAll({ attributes: ['keyword','sentiment','weight'], raw: true });
 
       let positiveScore = 0;
       let negativeScore = 0;
@@ -87,57 +87,25 @@ class SentimentAnalysisService {
       const isSpam = await TextProcessingService.isSpam(originalMessage);
       const duplicateCheck = await TextProcessingService.isDuplicate(cleanedMessage, commentId);
 
-      const sql = `
-        INSERT INTO comment_analysis (
-          comment_id,
-          original_message,
-          cleaned_message,
-          is_spam,
-          is_duplicate,
-          duplicate_of,
-          message_length,
-          word_count,
-          has_emoji,
-          has_link,
-          has_tag,
-          language,
-          sentiment,
-          sentiment_score,
-          confidence_score,
-          keywords
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON DUPLICATE KEY UPDATE
-          cleaned_message = VALUES(cleaned_message),
-          is_spam = VALUES(is_spam),
-          is_duplicate = VALUES(is_duplicate),
-          duplicate_of = VALUES(duplicate_of),
-          sentiment = VALUES(sentiment),
-          sentiment_score = VALUES(sentiment_score),
-          confidence_score = VALUES(confidence_score),
-          keywords = VALUES(keywords),
-          analyzed_at = CURRENT_TIMESTAMP
-      `;
-
-      const keywordsJson = JSON.stringify(analysis.keywords);
-
-      await db.query(sql, [
-        commentId,
-        originalMessage,
-        cleanedMessage,
-        isSpam,
-        duplicateCheck.isDuplicate,
-        duplicateCheck.duplicateOf,
-        metadata.length,
-        metadata.wordCount,
-        metadata.hasEmoji,
-        metadata.hasLink,
-        metadata.hasTag,
-        metadata.language,
-        analysis.sentiment,
-        analysis.sentimentScore,
-        analysis.confidenceScore,
-        keywordsJson
-      ]);
+      await CommentAnalysis.upsert({
+        comment_id: commentId,
+        original_message: originalMessage,
+        cleaned_message: cleanedMessage,
+        is_spam: isSpam,
+        is_duplicate: duplicateCheck.isDuplicate,
+        duplicate_of: duplicateCheck.duplicateOf,
+        message_length: metadata.length,
+        word_count: metadata.wordCount,
+        has_emoji: metadata.hasEmoji,
+        has_link: metadata.hasLink,
+        has_tag: metadata.hasTag,
+        language: metadata.language,
+        sentiment: analysis.sentiment,
+        sentiment_score: analysis.sentimentScore,
+        confidence_score: analysis.confidenceScore,
+        keywords: analysis.keywords,
+        analyzed_at: new Date()
+      });
 
       return {
         success: true,
@@ -275,28 +243,23 @@ class SentimentAnalysisService {
   // Get analytics summary
   static async getAnalyticsSummary(days = 7) {
     try {
-      const sql = `
-        SELECT 
-          COUNT(*) as total_comments,
-          COUNT(CASE WHEN is_spam = TRUE THEN 1 END) as spam_count,
-          COUNT(CASE WHEN is_duplicate = TRUE THEN 1 END) as duplicate_count,
-          COUNT(CASE WHEN sentiment = 'positive' THEN 1 END) as positive_count,
-          COUNT(CASE WHEN sentiment = 'negative' THEN 1 END) as negative_count,
-          COUNT(CASE WHEN sentiment = 'neutral' THEN 1 END) as neutral_count,
-          COUNT(CASE WHEN sentiment = 'mixed' THEN 1 END) as mixed_count,
-          AVG(sentiment_score) as avg_sentiment_score,
-          AVG(confidence_score) as avg_confidence
-        FROM comment_analysis
-        WHERE analyzed_at >= DATE_SUB(NOW(), INTERVAL ? DAY)
-      `;
-
-      const result = await db.query(sql, [days]);
-      
-      return {
-        success: true,
-        data: result[0] || {},
-        period: `${days} days`
+      const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+      const rows = await CommentAnalysis.findAll({
+        where: { analyzed_at: { [Op.gte]: since } },
+        raw: true
+      });
+      const data = {
+        total_comments: rows.length,
+        spam_count: rows.filter(r => r.is_spam).length,
+        duplicate_count: rows.filter(r => r.is_duplicate).length,
+        positive_count: rows.filter(r => r.sentiment === 'positive').length,
+        negative_count: rows.filter(r => r.sentiment === 'negative').length,
+        neutral_count: rows.filter(r => r.sentiment === 'neutral').length,
+        mixed_count: rows.filter(r => r.sentiment === 'mixed').length,
+        avg_sentiment_score: rows.length ? (rows.reduce((a,b)=>a + (Number(b.sentiment_score)||0),0)/rows.length) : 0,
+        avg_confidence: rows.length ? (rows.reduce((a,b)=>a + (Number(b.confidence_score)||0),0)/rows.length) : 0
       };
+      return { success: true, data, period: `${days} days` };
 
     } catch (error) {
       console.error('Error getting analytics:', error.message);
@@ -310,25 +273,31 @@ class SentimentAnalysisService {
   // Get sentiment trend
   static async getSentimentTrend(days = 30) {
     try {
-      const sql = `
-        SELECT 
-          DATE(analyzed_at) as date,
-          sentiment,
-          COUNT(*) as count,
-          AVG(sentiment_score) as avg_score
-        FROM comment_analysis
-        WHERE analyzed_at >= DATE_SUB(NOW(), INTERVAL ? DAY)
-        GROUP BY DATE(analyzed_at), sentiment
-        ORDER BY date DESC, sentiment
-      `;
-
-      const results = await db.query(sql, [days]);
-      
-      return {
-        success: true,
-        data: results,
-        period: `${days} days`
-      };
+      const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+      const rows = await CommentAnalysis.findAll({
+        where: { analyzed_at: { [Op.gte]: since } },
+        attributes: ['analyzed_at','sentiment','sentiment_score'],
+        raw: true
+      });
+      const byDate = {};
+      rows.forEach(r => {
+        const date = new Date(r.analyzed_at);
+        const yyyy = date.getFullYear();
+        const mm = String(date.getMonth()+1).padStart(2,'0');
+        const dd = String(date.getDate()).padStart(2,'0');
+        const key = `${yyyy}-${mm}-${dd}`;
+        byDate[key] = byDate[key] || {};
+        byDate[key][r.sentiment] = byDate[key][r.sentiment] || { count: 0, totalScore: 0 };
+        byDate[key][r.sentiment].count += 1;
+        byDate[key][r.sentiment].totalScore += Number(r.sentiment_score)||0;
+      });
+      const results = [];
+      Object.entries(byDate).forEach(([date, sentiments]) => {
+        Object.entries(sentiments).forEach(([sentiment, v]) => {
+          results.push({ date, sentiment, count: v.count, avg_score: v.count ? v.totalScore / v.count : 0 });
+        });
+      });
+      return { success: true, data: results, period: `${days} days` };
 
     } catch (error) {
       console.error('Error getting trend:', error.message);
@@ -342,33 +311,14 @@ class SentimentAnalysisService {
   // Get top keywords
   static async getTopKeywords(sentiment = null, limit = 20) {
     try {
-      let sql = `
-        SELECT 
-          keywords,
-          sentiment,
-          COUNT(*) as frequency
-        FROM comment_analysis
-        WHERE keywords IS NOT NULL
-          AND analyzed_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
-      `;
-
-      const params = [];
-
-      if (sentiment) {
-        sql += ` AND sentiment = ?`;
-        params.push(sentiment);
-      }
-
-      sql += ` GROUP BY keywords, sentiment ORDER BY frequency DESC LIMIT ?`;
-      params.push(limit);
-
-      const results = await db.query(sql, params);
-
-      // Flatten keywords
+      const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+      const where = { analyzed_at: { [Op.gte]: since } };
+      if (sentiment) where.sentiment = sentiment;
+      const results = await CommentAnalysis.findAll({ where, attributes: ['keywords','sentiment'], raw: true });
       const keywordMap = {};
       results.forEach(row => {
         try {
-          const keywords = JSON.parse(row.keywords);
+          const keywords = Array.isArray(row.keywords) ? row.keywords : JSON.parse(row.keywords || '[]');
           keywords.forEach(keyword => {
             if (!keywordMap[keyword]) {
               keywordMap[keyword] = {
@@ -377,8 +327,8 @@ class SentimentAnalysisService {
                 sentiments: {}
               };
             }
-            keywordMap[keyword].frequency += row.frequency;
-            keywordMap[keyword].sentiments[row.sentiment] = (keywordMap[keyword].sentiments[row.sentiment] || 0) + row.frequency;
+            keywordMap[keyword].frequency += 1;
+            keywordMap[keyword].sentiments[row.sentiment] = (keywordMap[keyword].sentiments[row.sentiment] || 0) + 1;
           });
         } catch (e) {
           // Skip invalid JSON
