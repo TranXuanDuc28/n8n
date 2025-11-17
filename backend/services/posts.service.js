@@ -266,11 +266,11 @@ class PostsService {
       
       if (checkTime) {
         // Sử dụng thời gian từ FE và convert sang Vietnam timezone
-        timeToCheck = TimezoneUtils.createVietnamDate(checkTime);
+        timeToCheck = new Date(checkTime);
         console.log('Using checkTime from FE (Vietnam time):', timeToCheck);
       } else {
-        // Fallback về thời gian mặc định nếu không có input (15 phút trước)
-        timeToCheck = TimezoneUtils.subtract(TimezoneUtils.now(), 15, 'minutes').toDate();
+        // Fallback về thời gian mặc định nếu không có input (10 phút trước)
+        timeToCheck = TimezoneUtils.subtract(TimezoneUtils.now(), 3, 'minutes').toDate();
         console.log('Using default checkTime (Vietnam time):', timeToCheck);
       }
       
@@ -286,9 +286,11 @@ class PostsService {
             model: PlatformPost,
             as: 'platformPosts',
             where: {
-              status: 'published'
+              status: 'published',
+              checked: false
+           
             },
-            required: true
+           
           }
         ],
         order: [['published_at', 'ASC']]

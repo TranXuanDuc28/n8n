@@ -139,7 +139,6 @@ class ChatAIService {
           {
             model: PlatformPost,
             as: 'platformPosts',
-            where: { status: 'published' },
             required: false
           },
           {
@@ -151,13 +150,33 @@ class ChatAIService {
         order: [['published_at', 'DESC']],
         limit: 50
       });
-
       const dynamicResponses = [];
 
       for (const post of recentPosts) {
         // Extract topics and keywords from post content
         const topics = this.extractTopicsFromPost(post);
-        
+
+        // Try to extract an image URL from post.media (if any)
+        let imageUrl = null;
+        try {
+          const media = post.media;
+          if (media) {
+            const m = typeof media === 'string' ? JSON.parse(media) : media;
+            if (Array.isArray(m)) {
+              const firstImg = m.find(item => typeof item === 'string' && /\.(png|jpe?g|webp|gif)$/i.test(item));
+              if (firstImg) imageUrl = firstImg;
+            } else if (typeof m === 'object') {
+              if (m.url && typeof m.url === 'string') imageUrl = m.url;
+              if (!imageUrl && Array.isArray(m.images)) {
+                const firstImg = m.images.find(u => typeof u === 'string');
+                if (firstImg) imageUrl = firstImg;
+              }
+            }
+          }
+        } catch (_) {
+          // ignore malformed media json
+        }
+
         // Create dynamic responses based on post content
         for (const topic of topics) {
           dynamicResponses.push({
@@ -167,8 +186,51 @@ class ChatAIService {
             post_id: post.id,
             post_title: post.title,
             engagement_score: this.calculateEngagementScore(post.engagements),
-            is_active: true
+            is_active: true,
+            image_url: imageUrl || null
           });
+        }
+
+        // Also leverage platform-specific content as potential responses
+        if (post.platformPosts && Array.isArray(post.platformPosts)) {
+          for (const pp of post.platformPosts) {
+            if (pp.content) {
+              // Extract keywords from platform post content for better matching
+              const platformKeywords = this.extractKeywordsFromText(pp.content);
+              
+              // Create response for each extracted keyword
+              for (const keyword of platformKeywords) {
+                dynamicResponses.push({
+                  keyword: keyword.toLowerCase(),
+                  response_text: pp.content,
+                  category: 'dynamic_platform_post',
+                  post_id: post.id,
+                  post_title: post.title,
+                  platform: pp.platform,
+                  platform_post_id: pp.id,
+                  status: pp.status,
+                  is_active: true,
+                  image_url: pp.image_url || imageUrl || null
+                });
+              }
+              
+              // Also add a general response based on post topic/title
+              if (post.topic || post.title) {
+                dynamicResponses.push({
+                  keyword: (post.topic || post.title || '').toLowerCase(),
+                  response_text: pp.content,
+                  category: 'dynamic_platform_post',
+                  post_id: post.id,
+                  post_title: post.title,
+                  platform: pp.platform,
+                  platform_post_id: pp.id,
+                  status: pp.status,
+                  is_active: true,
+                  image_url: pp.image_url || imageUrl || null
+                });
+              }
+            }
+          }
         }
 
         // Add campaign-specific responses
@@ -188,6 +250,112 @@ class ChatAIService {
       this.logger.error('Error getting dynamic content from posts', { error: error.message });
       return [];
     }
+  }
+
+  /**
+   * Get A/B test insights for enhanced responses
+   */
+  async getABTestInsights() {
+    try {
+      const tests = await AbTest.findAll({
+        where: { status: 'completed' },
+        include: [{
+          model: AbTestVariant,
+          as: 'variants'
+        }],
+        order: [['completedAt', 'DESC']],
+        limit: 50
+      });
+
+      const insights = [];
+
+      for (const test of tests) {
+        const variants = Array.isArray(test.variants) ? test.variants : [];
+        if (variants.length === 0) continue;
+
+        // Choose best by metrics.engagement || likes+comments+shares || ctr
+        let best = null;
+        let bestScore = -Infinity;
+        for (const v of variants) {
+          const m = v.metrics || {};
+          const aggregate = (m.engagement || 0) + (m.likes || 0) + (m.comments || 0) + (m.shares || 0) + ((m.ctr || 0) * 100);
+          if (aggregate > bestScore) {
+            bestScore = aggregate;
+            best = v;
+          }
+        }
+
+        const keyword = (test.type || test.projectId || 'ab_test').toString().toLowerCase();
+        const summary = `Từ kết quả A/B test "${test.type || test.projectId}", biến thể có hiệu suất tốt nhất đang mang lại tương tác cao. Bạn có muốn mình tư vấn theo hướng nội dung này không?`;
+
+        insights.push({
+          keyword,
+          response_text: summary,
+          category: 'ab_test_insight',
+          is_active: true,
+          ab_test_id: test.id,
+          best_variant_image: best ? best.imageUrl : null
+        });
+      }
+
+      this.logger.debug('Generated A/B test insights', { count: insights.length });
+      return insights;
+    } catch (error) {
+      this.logger.error('Error generating A/B test insights', { error: error.message });
+      return [];
+    }
+  }
+
+  /**
+   * Extract keywords from text content
+   */
+  extractKeywordsFromText(text) {
+    if (!text || typeof text !== 'string') return [];
+    
+    const keywords = [];
+    const content = text.toLowerCase();
+    
+    // Common Vietnamese keywords for travel, food, beauty, etc.
+    const keywordPatterns = [
+      // Travel keywords
+      'du lịch', 'tour', 'khách sạn', 'resort', 'nghỉ dưỡng', 'đi chơi', 'tham quan',
+      'đà nẵng', 'hội an', 'nha trang', 'phú quốc', 'sapa', 'hạ long', 'huế', 'hồ chí minh', 'hà nội',
+      // Food keywords
+      'ăn uống', 'nhà hàng', 'quán ăn', 'món ngon', 'ẩm thực', 'buffet', 'đặc sản',
+      // Beauty keywords
+      'làm đẹp', 'spa', 'massage', 'chăm sóc da', 'mỹ phẩm', 'thẩm mỹ',
+      // Shopping keywords
+      'mua sắm', 'shop', 'cửa hàng', 'giảm giá', 'khuyến mãi', 'sale',
+      // Service keywords
+      'dịch vụ', 'tư vấn', 'hỗ trợ', 'chăm sóc khách hàng'
+    ];
+    
+    // Find matching keywords
+    for (const pattern of keywordPatterns) {
+      if (content.includes(pattern)) {
+        keywords.push(pattern);
+      }
+    }
+    
+    // Extract hashtags if any
+    const hashtagMatches = text.match(/#[\w\u00C0-\u1EF9]+/g);
+    if (hashtagMatches) {
+      hashtagMatches.forEach(tag => {
+        keywords.push(tag.substring(1)); // Remove # symbol
+      });
+    }
+    
+    // Extract words that might be important (longer than 3 characters)
+    const words = text.match(/[\w\u00C0-\u1EF9]{4,}/g);
+    if (words) {
+      words.forEach(word => {
+        if (word.length >= 4 && !keywords.includes(word.toLowerCase())) {
+          keywords.push(word.toLowerCase());
+        }
+      });
+    }
+    
+    return keywords.slice(0, 10); // Limit to 10 keywords per post
   }
 
   /**
@@ -277,165 +445,97 @@ class ChatAIService {
   /**
    * Get A/B test insights for enhanced responses
    */
-  async getABTestInsights() {
-    try {
-      // Get completed A/B tests with best performing variants
-      const completedTests = await AbTest.findAll({
-        where: {
-          status: 'completed',
-          bestVariantId: { [require('sequelize').Op.ne]: null }
-        },
-        include: [
-          {
-            model: AbTestVariant,
-            as: 'variants',
-            where: { 
-              id: { [require('sequelize').Op.in]: [] } // Will be filled with bestVariantId
-            },
-            required: false
-          }
-        ],
-        order: [['completedAt', 'DESC']],
-        limit: 10
-      });
-
-      const insights = [];
-
-      for (const test of completedTests) {
-        if (test.bestVariantId && test.variants) {
-          const bestVariant = test.variants.find(v => v.id === test.bestVariantId);
-          
-          if (bestVariant && test.data) {
-            const testData = typeof test.data === 'string' ? JSON.parse(test.data) : test.data;
-            
-            // Create insights based on successful A/B test results
-            if (testData.type === 'banner') {
-              insights.push({
-                keyword: testData.brand ? testData.brand.toLowerCase() : 'banner',
-                response_text: `Dựa trên kết quả A/B test của chúng tôi, ${testData.brand || 'các banner'} với style "${testData.style}" đang có hiệu suất rất tốt! Nhiều khách hàng đã quan tâm và đặt tour. Bạn có muốn xem chi tiết không? 🎯`,
-                category: 'ab_test_insight',
-                test_id: test.id,
-                test_type: testData.type,
-                best_variant_id: test.bestVariantId,
-                is_active: true
-              });
-            }
-
-            if (testData.type === 'carousel') {
-              insights.push({
-                keyword: 'carousel',
-                response_text: `Chúng tôi vừa hoàn thành A/B test về carousel và kết quả rất tích cực! Carousel của chúng tôi đang thu hút nhiều sự chú ý từ khách hàng. Bạn muốn tìm hiểu về các tour được giới thiệu không? 🎠`,
-                category: 'ab_test_insight',
-                test_id: test.id,
-                test_type: testData.type,
-                best_variant_id: test.bestVariantId,
-                is_active: true
-              });
-            }
-          }
-        }
-      }
-
-      this.logger.debug('Generated A/B test insights', { 
-        testsProcessed: completedTests.length,
-        insightsGenerated: insights.length 
-      });
-
-      return insights;
-    } catch (error) {
-      this.logger.error('Error getting A/B test insights', { error: error.message });
-      return [];
-    }
-  }
-
-  /**
-   * Generate AI response using Gemini
-   */
   async generateAIResponse(message, conversationHistory = [], databaseResponses = []) {
     if (!this.model) {
       throw new Error('Gemini AI not available');
     }
-
+  
     try {
-      // Build context from conversation history
+      // Xây dựng ngữ cảnh hội thoại
       const context = conversationHistory.map(conv => 
         `${conv.message_type === 'received' ? 'User' : 'Assistant'}: ${conv.message_text}`
       ).join('\n');
-
-      // Build database context
+  
+      // Xây dựng ngữ cảnh từ cơ sở dữ liệu phản hồi
       const dbContext = databaseResponses.map(resp => 
         `Keyword: ${resp.keyword} -> Response: ${resp.response_text}`
       ).join('\n');
-
-      // Separate static and dynamic responses for better context
+  
+      // Phân loại phản hồi: tĩnh / động / A-B test
       const staticResponses = databaseResponses.filter(r => !r.category || !r.category.includes('dynamic'));
       const dynamicResponses = databaseResponses.filter(r => r.category && r.category.includes('dynamic'));
       const abTestResponses = databaseResponses.filter(r => r.category && r.category.includes('ab_test'));
-
-      // Build dynamic context from posts
+  
+      // Bối cảnh từ các bài viết gần đây
       const dynamicContext = dynamicResponses.length > 0 ? 
         `BÀI VIẾT GẦN ĐÂY (${dynamicResponses.length} bài):
-${dynamicResponses.slice(0, 5).map(r => `- "${r.post_title}": ${r.response_text}`).join('\n')}` : '';
-
-      // Build A/B test insights
+  ${dynamicResponses.slice(0, 5).map(r => `- "${r.post_title}": ${r.response_text}`).join('\n')}` : '';
+  
+      // Bối cảnh từ kết quả A/B test
       const abTestContext = abTestResponses.length > 0 ?
         `KẾT QUẢ A/B TEST (${abTestResponses.length} insights):
-${abTestResponses.slice(0, 3).map(r => `- ${r.response_text}`).join('\n')}` : '';
-
-      // Create comprehensive prompt with dynamic content
-      const prompt = `Bạn là trợ lý AI của fanpage "Golden Trip - Du Lịch & Trải Nghiệm". 
-Nhiệm vụ: Trả lời tin nhắn của khách hàng dựa trên nội dung thực tế từ các bài đăng và chiến dịch hiện tại.
-
-NGỮ CẢNH HIỆN TẠI:
-- Tin nhắn khách hàng: ${message}
-- Lịch sử hội thoại: ${context || 'Chưa có lịch sử'}
-
-${dynamicContext}
-
-${abTestContext}
-
-CƠ SỞ DỮ LIỆU PHẢN HỒI CƠ BẢN:
-${dbContext || 'Chưa có dữ liệu cơ bản'}
-
-HƯỚNG DẪN TRẢ LỜI THÔNG MINH:
-1. Ưu tiên sử dụng thông tin từ bài đăng gần đây (dynamic context)
-2. Tham khảo kết quả A/B test để tăng tính thuyết phục
-3. Trả lời thân thiện, nhiệt tình và chuyên nghiệp
-4. Tập trung vào dịch vụ du lịch, địa điểm, tour, combo
-5. Khuyến khích khách hàng liên hệ hoặc đặt tour
-6. Sử dụng emoji phù hợp nhưng không quá nhiều
-7. Trả lời ngắn gọn, dễ hiểu (2-4 câu)
-8. Luôn kết thúc bằng lời mời hành động (CTA)
-
-TÌNH HUỐNG ĐẶC BIỆT:
-- Nếu khách hỏi về địa điểm có trong bài đăng gần đây: Tham khảo thông tin từ bài đăng đó
-- Nếu khách hỏi về khuyến mãi: Sử dụng thông tin từ campaign hiện tại
-- Nếu khách hỏi về hiệu quả: Tham khảo kết quả A/B test
-- Luôn cập nhật thông tin mới nhất từ các bài đăng
-
-Trả lời tin nhắn của khách hàng dựa trên thông tin thực tế:`;
-
+  ${abTestResponses.slice(0, 3).map(r => `- ${r.response_text}`).join('\n')}` : '';
+  
+      // 👉 Prompt mới: phản hồi cho MỌI LĨNH VỰC
+      const prompt = `Bạn là trợ lý AI của fanpage, có nhiệm vụ phản hồi bình luận hoặc tin nhắn của khách hàng về **mọi lĩnh vực** mà fanpage đăng tải: 
+  du lịch, ẩm thực, làm đẹp, công nghệ, giáo dục, kinh doanh, sức khỏe, phong cách sống, v.v.
+  
+  🎯 NHIỆM VỤ:
+  Trả lời khách hàng dựa trên nội dung thực tế từ các bài đăng, phản hồi trước đó, và dữ liệu trong cơ sở dữ liệu.
+  
+  NGỮ CẢNH HIỆN TẠI:
+  - Tin nhắn khách hàng: ${message}
+  - Lịch sử hội thoại: ${context || 'Chưa có lịch sử'}
+  
+  ${dynamicContext}
+  
+  ${abTestContext}
+  
+  CƠ SỞ DỮ LIỆU PHẢN HỒI:
+  ${dbContext || 'Chưa có dữ liệu cơ bản'}
+  
+  💡 HƯỚNG DẪN PHẢN HỒI:
+  1. Luôn dựa vào nội dung bài đăng hoặc dữ liệu có liên quan để trả lời chính xác.
+  2. Giọng văn thân thiện, tự nhiên, thể hiện sự quan tâm và chuyên nghiệp.
+  3. Giữ câu trả lời ngắn gọn (2–4 câu), dễ hiểu và mang năng lượng tích cực.
+  4. Sử dụng emoji nhẹ nhàng để tăng tương tác (🌟✨💬💌...).
+  5. Nếu phù hợp, kết thúc bằng lời mời hành động (CTA) như:
+     - “Inbox em để được tư vấn chi tiết hơn nhé 💌”
+     - “Anh/chị muốn xem thêm sản phẩm tương tự không ạ?”
+     - “Theo dõi page để cập nhật thêm tin mới nha 🌟”
+  6. Nếu câu hỏi không thuộc lĩnh vực cụ thể → phản hồi trung lập, lịch sự, và gợi ý khách inbox hoặc để lại thông tin liên hệ.
+  
+  📘 TÌNH HUỐNG ĐẶC BIỆT:
+  - Nếu khách nhắc đến chủ đề xuất hiện trong bài đăng gần đây → sử dụng thông tin từ bài viết đó.
+  - Nếu khách hỏi về ưu đãi / giá / chương trình → mời khách inbox để nhận chi tiết.
+  - Nếu không có dữ liệu phù hợp → giữ giọng lịch sự, gợi mở trò chuyện.
+  
+  ➡️ Hãy phản hồi cho khách hàng dựa trên thông tin thực tế và hướng dẫn trên:`;
+  
+      // Gọi mô hình AI
       const result = await this.model.generateContent(prompt);
       const response = await result.response;
       const aiResponse = response.text().trim();
-
+  
       if (!aiResponse || aiResponse.length < 10) {
         throw new Error('AI response too short or empty');
       }
-
+  
+      // Ghi log thông tin phản hồi
       this.logger.info('Generated AI response', { 
         messageLength: message.length,
         responseLength: aiResponse.length,
         hasHistory: conversationHistory.length > 0,
         hasDatabase: databaseResponses.length > 0
       });
-
+  
       return aiResponse;
     } catch (error) {
       this.logger.error('Error generating AI response', { error: error.message });
       throw error;
     }
   }
+  
 
   /**
    * Log analytics event
@@ -555,7 +655,9 @@ Trả lời tin nhắn của khách hàng dựa trên thông tin thực tế:`;
       this.logger.info('Refreshing dynamic content cache...');
       
       const dynamicContent = await this.getDynamicContentFromPosts();
+      //console.log("dynamicContent", dynamicContent)
       const abTestInsights = await this.getABTestInsights();
+      console.log("abTestInsights", abTestInsights)
       
       this.logger.info('Dynamic content refreshed', {
         dynamicResponses: dynamicContent.length,
@@ -614,7 +716,7 @@ Trả lời tin nhắn của khách hàng dựa trên thông tin thực tế:`;
           title: post.title,
           content: post.content,
           status: post.status,
-          published_at: post.posted_at,
+          published_at: post.published_at,
           campaign: post.campaign,
           platform_posts_count: post.platformPosts ? post.platformPosts.length : 0,
           engagements_count: post.engagements ? post.engagements.length : 0,

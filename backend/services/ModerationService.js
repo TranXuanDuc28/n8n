@@ -19,13 +19,32 @@ class ModerationService {
       
       const url = `https://graph.facebook.com/v23.0/${commentId}`;
       console.log(`Attempting to hide comment: ${commentId}`);
-      
-      const response = await axios.post(url, {
-        is_hidden: true
-      }, {
+
+      // Pre-check capabilities for better diagnostics
+      try {
+        const capabilities = await axios.get(url, {
+          params: { fields: 'can_hide,is_hidden,from,permalink_url' },
+          headers: { 'Authorization': `Bearer ${accessToken}` },
+          timeout: 10000
+        });
+        const { can_hide, is_hidden, from, permalink_url } = capabilities.data || {};
+        Logger.debug('Comment capabilities', { comment_id: commentId, can_hide, is_hidden, from, permalink_url });
+        if (is_hidden === true) {
+          Logger.info('Comment already hidden', { comment_id: commentId });
+          return { success: true, message: 'Comment already hidden' };
+        }
+        if (can_hide === false) {
+          Logger.warning('Comment cannot be hidden by this token/page', { comment_id: commentId, from, permalink_url });
+        }
+      } catch (capErr) {
+        console.warn('Failed to fetch comment capabilities:', capErr.message);
+      }
+
+      // Send is_hidden as query params (Graph API friendly)
+      const response = await axios.post(url, null, {
+        params: { is_hidden: true },
         headers: {
-          'Authorization': `Bearer ${accessToken}`,
-          'Content-Type': 'application/json'
+          'Authorization': `Bearer ${accessToken}`
         },
         timeout: 10000 // 10 second timeout
       });

@@ -6,6 +6,7 @@ const { Op } = require('sequelize');
 const TimezoneUtils = require('../utils/timezone');
 
 const { Visual, AbTest, AbTestVariant } = require('../models');
+const removeAccents = require('remove-accents');
 
 // const HUGGINGFACE_API_URL = 'https://api-inference.huggingface.co/models/runwayml/stable-diffusion-v1-5';
 const HUGGINGFACE_API_URL = 'https://router.huggingface.co/together/v1/images/generations';
@@ -63,65 +64,81 @@ class VisualService {
   // }
  
 
-static async generateBanner(prompt, size = '1200x630', variants = 1) {
-  const images = [];
-  const [width, height] = size.split('x').map(Number);
 
-  for (let i = 0; i < variants; i++) {
-    const variantPrompt = variants > 1 ? `${prompt} - Variant ${i + 1}` : prompt;
-    console.log('Generating image with prompt:', variantPrompt);
 
-    // Gọi Hugging Face API
-    const payload = {
-      prompt: variantPrompt,
-      response_format: 'b64_json',
-      model: 'black-forest-labs/FLUX.1-schnell'
+  static async generateBanner(prompt, size = '1200x630', variants = 1) {
+    const images = [];
+    const [width, height] = size.split('x').map(Number);
+
+    const extractSignature = (text) => {
+      let clean = text.replace(/[^\p{L}\p{N}\s]/gu, '').trim();
+      const words = clean.split(/\s+/);
+      return removeAccents(words.slice(-3).join(' '));
     };
 
-    const response = await axios.post(HUGGINGFACE_API_URL, payload, {
-      headers: {
-        Authorization: `Bearer ${HUGGINGFACE_API_KEY}`,
-        'Content-Type': 'application/json'
-      }
-    });
+    for (let i = 0; i < variants; i++) {
+      const variantPrompt = `Hãy thêm một vài chữ đặc trưng cho ảnh: ${prompt} - Phiên bản ${i + 1}`;
+      const signatureText = extractSignature(prompt);
 
-    const b64Data = response.data.data[0]?.b64_json;
-    if (!b64Data) {
-      throw new Error('No image returned from Hugging Face API');
+      console.log('Generating image with prompt:', variantPrompt);
+
+      const payload = {
+        prompt: variantPrompt,
+        response_format: 'b64_json',
+        model: 'black-forest-labs/FLUX.1-schnell'
+      };
+
+      const response = await axios.post(HUGGINGFACE_API_URL, payload, {
+        headers: {
+          Authorization: `Bearer ${HUGGINGFACE_API_KEY}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      const b64Data = response.data.data[0]?.b64_json;
+      if (!b64Data) throw new Error('No image returned from Hugging Face API');
+
+      const imgBuffer = Buffer.from(b64Data, 'base64');
+
+      // Thêm signature rõ ràng bằng Sharp
+      const svgText = `
+        <svg width="${width}" height="${height}">
+          <style>
+            .signature {
+              fill: white;
+              font-size: 42px;
+              font-weight: bold;
+              font-family: 'Arial, sans-serif';
+              text-shadow: 2px 2px 4px rgba(0,0,0,0.6);
+            }
+          </style>
+          <text x="${width - 30}" y="${height - 30}" text-anchor="end" class="signature">${signatureText}</text>
+        </svg>
+      `;
+
+      const processedImg = await sharp(imgBuffer)
+        .resize(width, height)
+        .composite([{ input: Buffer.from(svgText), top: 0, left: 0 }])
+        .png()
+        .toBuffer();
+
+      const tmpPath = path.join(__dirname, '../generated', `banner-${Date.now()}-${i}.png`);
+      await fs.mkdir(path.dirname(tmpPath), { recursive: true });
+      await fs.writeFile(tmpPath, processedImg);
+
+      const cloudRes = await cloudinary.uploader.upload(tmpPath, {
+        folder: 'banners',
+        use_filename: true,
+        unique_filename: true,
+        overwrite: true
+      });
+
+      console.log('Uploaded to Cloudinary:', cloudRes.secure_url);
+      images.push(cloudRes.secure_url);
     }
 
-    // Chuyển base64 → buffer
-    const imgBuffer = Buffer.from(b64Data, 'base64');
-
-    // Resize & convert sang PNG
-    const processedImg = await sharp(imgBuffer)
-      .resize(width, height)
-      .png()
-      .toBuffer();
-
-    // Lưu tạm local trước khi upload (tuỳ chọn)
-    const tmpPath = path.join(__dirname, '../generated', `banner-${Date.now()}-${i}.png`);
-    await fs.mkdir(path.dirname(tmpPath), { recursive: true });
-    await fs.writeFile(tmpPath, processedImg);
-
-    // Upload lên Cloudinary
-    const cloudRes = await cloudinary.uploader.upload(tmpPath, {
-      folder: 'banners',        // thư mục trên Cloudinary
-      use_filename: true,       // dùng tên file gốc
-      unique_filename: true,    // tạo tên duy nhất
-      overwrite: true
-    });
-
-    console.log('Uploaded to Cloudinary:', cloudRes.secure_url);
-
-    // Thêm link public vào mảng trả về
-    images.push(cloudRes.secure_url);
+    return images;
   }
-
-  return images;
-}
-
-
   static async processImage(imageUrl, dimensions) {
     const [width, height] = (dimensions || '1920x1080').split('x').map(Number);
 
@@ -184,11 +201,11 @@ static async generateBanner(prompt, size = '1200x630', variants = 1) {
     
     if (checkTime) {
       // Sử dụng thời gian từ FE và convert sang Vietnam timezone
-      timeToCheck = TimezoneUtils.createVietnamDate(checkTime);
+      timeToCheck = new Date(checkTime);
       console.log('Using checkTime from FE (Vietnam time):', timeToCheck);
     } else {
       // Fallback về thời gian mặc định nếu không có input (2 phút trước)
-      timeToCheck = TimezoneUtils.subtract(TimezoneUtils.now(), 2, 'minutes').toDate();
+      timeToCheck = TimezoneUtils.subtract(TimezoneUtils.now(), 3, 'minutes').toDate();
       console.log('Using default checkTime (Vietnam time):', timeToCheck);
     }
 
@@ -218,8 +235,8 @@ static async generateBanner(prompt, size = '1200x630', variants = 1) {
     try {
       const activeTests = await AbTest.findAll({
         where: {
-          status: 'running',
-          scheduledAt: { [Op.lte]: new Date() }
+          status: 'completed',
+           
         },
         include: [
           {
@@ -229,6 +246,7 @@ static async generateBanner(prompt, size = '1200x630', variants = 1) {
         ],
         order: [['scheduledAt', 'DESC']]
       });
+      console.log('Active A/B tests fetched:', activeTests.length);
 
       return activeTests.map(test => ({
         id: test.id,

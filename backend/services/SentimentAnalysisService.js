@@ -85,15 +85,12 @@ class SentimentAnalysisService {
       const cleanedMessage = TextProcessingService.cleanText(originalMessage);
       const metadata = TextProcessingService.getTextMetadata(originalMessage);
       const isSpam = await TextProcessingService.isSpam(originalMessage);
-      const duplicateCheck = await TextProcessingService.isDuplicate(cleanedMessage, commentId);
 
       await CommentAnalysis.upsert({
         comment_id: commentId,
         original_message: originalMessage,
         cleaned_message: cleanedMessage,
         is_spam: isSpam,
-        is_duplicate: duplicateCheck.isDuplicate,
-        duplicate_of: duplicateCheck.duplicateOf,
         message_length: metadata.length,
         word_count: metadata.wordCount,
         has_emoji: metadata.hasEmoji,
@@ -109,8 +106,7 @@ class SentimentAnalysisService {
 
       return {
         success: true,
-        isSpam: isSpam,
-        isDuplicate: duplicateCheck.isDuplicate
+        isSpam: isSpam
       };
 
     } catch (error) {
@@ -185,29 +181,8 @@ class SentimentAnalysisService {
         };
       }
 
-      // Step 3: Check duplicate
+      // Step 3: (removed) Duplicate check
       const cleanedMessage = TextProcessingService.cleanText(message);
-      const duplicateCheck = await TextProcessingService.isDuplicate(cleanedMessage, commentId);
-
-      if (duplicateCheck.isDuplicate) {
-        await this.saveAnalysis(commentId, message, {
-          sentiment: 'neutral',
-          sentimentScore: 0,
-          confidenceScore: 0,
-          keywords: []
-        });
-
-        return {
-          success: true,
-          isToxic: false,
-          isSpam: false,
-          isDuplicate: true,
-          duplicateOf: duplicateCheck.duplicateOf,
-          shouldReply: false,
-          moderationAction: 'none',
-          analysis: null
-        };
-      }
 
       // Step 4: Analyze sentiment
       const analysis = await this.analyzeSentiment(message);
@@ -251,7 +226,6 @@ class SentimentAnalysisService {
       const data = {
         total_comments: rows.length,
         spam_count: rows.filter(r => r.is_spam).length,
-        duplicate_count: rows.filter(r => r.is_duplicate).length,
         positive_count: rows.filter(r => r.sentiment === 'positive').length,
         negative_count: rows.filter(r => r.sentiment === 'negative').length,
         neutral_count: rows.filter(r => r.sentiment === 'neutral').length,

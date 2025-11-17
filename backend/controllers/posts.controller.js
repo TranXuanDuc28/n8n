@@ -124,7 +124,7 @@ class PostsController {
         media: media || null,
         platform: Array.isArray(platform) ? platform.join(',') : platform,
         status: scheduledAt ? 'scheduled' : 'pending',
-        published_at: scheduledAt ? TimezoneUtils.createVietnamDate(scheduledAt) : null,
+        published_at: scheduledAt ? new Date(scheduledAt) : null,
         created_at: TimezoneUtils.now().toDate(),
         updated_at: TimezoneUtils.now().toDate()
       });

@@ -48,8 +48,6 @@ class CommentService {
               reason = `Toxic detected (${processingResult.analysis?.toxicCategory})`;
             else if (processingResult.isSpam)
               reason = 'Spam detected';
-            else if (processingResult.isDuplicate)
-              reason = 'Duplicate comment';
 
             results.skipped.push({
               comment_id: comment.comment_id,
@@ -57,7 +55,7 @@ class CommentService {
               moderation_action: processingResult.moderationAction || 'none',
               is_toxic: processingResult.isToxic || false,
               is_spam: processingResult.isSpam || false,
-              is_duplicate: processingResult.isDuplicate || false,
+              is_duplicate: false,
               analysis: processingResult.analysis
             });
             continue;

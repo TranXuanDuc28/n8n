@@ -16,16 +16,26 @@ class VisualController {
   // API kiểm tra scheduledAt trùng giờ hiện tại
   static async getAbTestByCurrentTime(req, res) {
     try {
-      const nowVN = TimezoneUtils.now();
-      const startOfMinute = nowVN.startOf('minute').toDate();
-      const endOfMinute = nowVN.endOf('minute').toDate();
+      const nowVietnam = TimezoneUtils.now();
+      // console.log("[Op.lte]: nowVietnam.utc().toDate()", nowVietnam.toDate());
 
+      // const startTime = TimezoneUtils.now().subtract(1, 'minute').startOf('minute');
+      // const endTime   = TimezoneUtils.now().add(1, 'minute').endOf('minute');
+
+      // const startOfMinute = startTime.utc().toDate();
+      // const endOfMinute   = endTime.utc().toDate();
+
+      // console.log('Current Vietnam time:', nowVietnam.format('YYYY-MM-DD HH:mm:ss'));
+      // console.log('Checking A/B tests scheduled between:', startOfMinute, 'and', endOfMinute);
+
+      let timeToCheck = TimezoneUtils.subtract(TimezoneUtils.now(), 0, 'minutes').toDate();
+      console.log('Checking A/B tests scheduled at or before Vietnam time:', timeToCheck);
       const abTests = await AbTest.findAll({
         where: {
           checked: false,
           status: 'running',
           scheduledAt: {
-            [Op.between]: [startOfMinute, endOfMinute]
+            [Op.lte]: timeToCheck
           }
         }
       });
@@ -44,7 +54,8 @@ class VisualController {
           projectId: test.projectId,
           variantCount: test.data.variantCount,
           scheduledAt: test.scheduledAt ? TimezoneUtils.formatVietnamTime(test.scheduledAt) : null,
-          abTestId: test.id
+          abTestId: test.id,
+          currentVietnamTime: nowVietnam.format('YYYY-MM-DD HH:mm:ss')
         };
 
         if (test.data.type === 'banner') {
@@ -93,7 +104,7 @@ static async forwardToWebhook(req, res) {
     
     let scheduledAt = null;
     if (data.scheduledAt) {
-      scheduledAt = TimezoneUtils.createVietnamDate(data.scheduledAt);
+      scheduledAt = new Date(data.scheduledAt);
       console.log('Converted scheduledAt to Vietnam time:', scheduledAt);
     } else {
       console.log('scheduledAt is null, will store null in DB');

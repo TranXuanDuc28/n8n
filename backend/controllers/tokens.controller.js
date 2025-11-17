@@ -19,7 +19,7 @@ class TokensController {
       const formattedTokens = {};
       tokens.forEach(token => {
         formattedTokens[token.platform] = {
-          access_token: token.access_token,
+          // access_token: token.access_token,
           token_type: token.token_type,
           expires_at: token.expires_at,
           scope: token.scope,

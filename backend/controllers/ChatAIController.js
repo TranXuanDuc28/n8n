@@ -73,14 +73,16 @@ class ChatAIController {
       let aiResponse;
       try {
         aiResponse = await this.chatAIService.generateAIResponse(userMessage, conversationHistory, databaseResponses);
-        this.logger.info('✅ AI response generated successfully', { responseLength: aiResponse.length });
+        const respLen = typeof aiResponse === 'string' ? aiResponse.length : (aiResponse?.text?.length || 0);
+        this.logger.info('✅ AI response generated successfully', { responseLength: respLen });
       } catch (error) {
         this.logger.error('❌ AI generation failed', { error: error.message });
-        aiResponse = 'Xin lỗi, tôi đang gặp sự cố kỹ thuật. Vui lòng thử lại sau hoặc liên hệ trực tiếp với chúng tôi qua số điện thoại. 😊';
+        aiResponse = { text: 'Xin lỗi, tôi đang gặp sự cố kỹ thuật. Vui lòng thử lại sau hoặc liên hệ trực tiếp với chúng tôi qua số điện thoại. 😊' };
       }
 
       // 6. Save AI response
-      await this.chatAIService.saveMessage(user.id, aiResponse, 'sent', null, conversationId);
+      const textToSave = typeof aiResponse === 'string' ? aiResponse : (aiResponse?.text || '');
+      await this.chatAIService.saveMessage(user.id, textToSave, 'sent', null, conversationId);
       this.logger.debug('💾 AI response saved');
 
       // 7. Log analytics
@@ -103,7 +105,8 @@ class ChatAIController {
       // Return response for external systems (n8n, etc.)
       res.json({
         success: true,
-        response: aiResponse,
+        response: typeof aiResponse === 'string' ? aiResponse : aiResponse.text,
+        attachment: typeof aiResponse === 'object' ? aiResponse.attachment : null,
         metadata: {
           processingTime,
           userId: user.id,

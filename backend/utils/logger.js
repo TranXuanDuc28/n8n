@@ -47,6 +47,11 @@ class Logger {
     return this.log('warning', message, metadata);
   }
 
+  // Backwards-compatible alias
+  static warn(message, metadata = {}) {
+    return this.warning(message, metadata);
+  }
+
   static error(message, metadata = {}) {
     return this.log('error', message, metadata);
   }
