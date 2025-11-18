@@ -22,7 +22,7 @@ router.get('/health', (req, res) => {
     timestamp: new Date().toISOString()
   });
 });
-
+//--------------------------------------Thong Thao--------------------------
 // Comment routes
 router.post('/comments/process', CommentController.processComments);
 router.post('/comments/mark-handled', CommentController.markHandled);
@@ -51,7 +51,7 @@ router.post('/moderation/delete', ModerationController.deleteComment);
 router.post('/moderation/restore', ModerationController.restoreComment);
 router.post('/moderation/batch', ModerationController.batchModerate);
 
-
+//--------------------------------------Xuan Duc----------------------------
 router.post('/generate-content-gemini', postsController.generateContentWithGemini);
 router.get('/posts/:postId', postsController.getPostById);
 router.get('/get-all-posts', postsController.getAllPosts);
@@ -77,6 +77,7 @@ router.post('/send-mail', mailController.sendMail);
 
 router.post("/embed", postsController.createEmbeddings);
 
+//--------------------------------------My Lanh----------------------------
 router.post('/generate-image', VisualController.generate);
 router.post('/process-image', VisualController.processImage);
 router.post('/create-variants', VisualController.createVariants);
@@ -100,6 +101,7 @@ router.get('/ab-test/running', VisualController.getRunningTests);
 router.get('/ab-test/results', VisualController.getAbTestResults);
 router.get('/ab-test/analytics', VisualController.getPerformanceAnalytics);
 
+//--------------------------------------Van Bao ----------------------------
 // ChatAI routes
 const chatAIController = new ChatAIController();
 router.post('/chatai/ai-reply', (req, res) => chatAIController.aiReply(req, res));
