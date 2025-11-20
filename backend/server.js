@@ -87,7 +87,10 @@ async function startServer() {
         console.log('✅ Sequelize models synced');
       } catch (err) {
         console.error('❌ Failed to sync Sequelize models:', err.message);
-        process.exit(1);
+        console.error('Continuing without syncing models. To avoid this, set AUTO_SYNC=false or fix model definitions.');
+        // NOTE: We do not exit here to allow the server to continue running for debugging.
+        // If you prefer to stop on sync errors, restore process.exit(1) below.
+        // process.exit(1);
       }
     }
 

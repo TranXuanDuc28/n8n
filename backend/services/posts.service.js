@@ -123,7 +123,7 @@ class PostsService {
 
   async getAllPosts(options = {}) {
     try {
-      const { page = 1, limit = 10, status, topic } = options;
+      const { page = 1, limit = 15, status, topic } = options;
       const offset = (page - 1) * limit;
 
       const whereClause = {};

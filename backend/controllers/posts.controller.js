@@ -67,6 +67,21 @@ class PostsController {
     }
   }
 
+  // DELETE /api/posts/:postId
+  async deletePost(req, res) {
+    try {
+      const { postId } = req.params;
+      const success = await PostsService.deletePost(postId);
+      if (!success) {
+        return res.status(404).json({ success: false, message: 'Post not found or could not be deleted' });
+      }
+
+      return res.json({ success: true, message: 'Post deleted' });
+    } catch (error) {
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  }
+
   // POST /api/posts/update-status
   async updatePostStatus(req, res) {
     try {
@@ -104,7 +119,7 @@ class PostsController {
   // POST /api/schedule-post
   async schedulePost(req, res) {
     try {
-      const { title, useAI, content, topic, media, platform, scheduledAt } = req.body;
+      const { title, useAI, content, topic, mediaUrl, platform, scheduledAt } = req.body;
       console.log('Received schedulePost request:', req.body);
 
       // Validate required fields
@@ -121,7 +136,7 @@ class PostsController {
         content,
         topic,
         useAI: useAI || false,
-        media: media || null,
+        media: mediaUrl || null,
         platform: Array.isArray(platform) ? platform.join(',') : platform,
         status: scheduledAt ? 'scheduled' : 'pending',
         published_at: scheduledAt ? new Date(scheduledAt) : null,

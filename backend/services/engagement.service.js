@@ -72,10 +72,10 @@ class EngagementService {
     }
   }
 
-  async getEngagementByPost(platformPostId) {
+  async getEngagementByPost(post_id) {
     try {
       const engagement = await Engagement.findAll({
-        where: { platform_post_id: platformPostId },
+        where: { post_id: post_id },
         include: [
           {
             model: PlatformPost,

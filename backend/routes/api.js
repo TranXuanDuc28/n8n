@@ -54,6 +54,8 @@ router.post('/moderation/batch', ModerationController.batchModerate);
 //--------------------------------------Xuan Duc----------------------------
 router.post('/generate-content-gemini', postsController.generateContentWithGemini);
 router.get('/posts/:postId', postsController.getPostById);
+// Delete post
+router.delete('/posts/:postId', postsController.deletePost);
 router.get('/get-all-posts', postsController.getAllPosts);
 router.post('/posts/update-status', postsController.updatePostStatus);
 router.post('/list-to-check', postsController.getPostsToCheck);
@@ -72,6 +74,10 @@ router.post('/post-to-facebook', socialController.postToFacebook);
 router.post('/post-to-instagram', socialController.postToInstagram);
 
 router.post('/get-engagement', engagementController.getEngagement);
+// Get low engagement posts (threshold query param)
+router.get('/engagement/low', engagementController.getLowEngagement);
+// Get engagement records for a specific post
+router.get('/engagement/post/:postId', engagementController.getEngagementForPost);
 
 router.post('/send-mail', mailController.sendMail);
 

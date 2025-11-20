@@ -160,3 +160,34 @@ class EngagementController {
 }
 
 module.exports = new EngagementController();
+
+// GET low engagement posts endpoint helper
+EngagementController.prototype.getLowEngagement = async function(req, res) {
+  try {
+    // threshold can be provided as query param, default to 5
+    const threshold = parseInt(req.query.threshold, 10) || 5;
+    const results = await require('../services/engagement.service').getLowEngagementPosts(threshold);
+    res.json({ success: true, threshold, count: results.length, data: results });
+  } catch (err) {
+    console.error('Error fetching low engagement posts:', err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// Get engagement records for a specific post id
+EngagementController.prototype.getEngagementForPost = async function(req, res) {
+  try {
+    const postId = req.params.postId;
+    if (!postId) return res.status(400).json({ success: false, message: 'postId required' });
+
+    // Query Engagements that either have post_id or are linked via PlatformPost->post
+    const EngagementService = require('../services/engagement.service');
+    // Use the service's helper methods by directly querying via sequelize models
+    const rows = await EngagementService.getEngagementByPost(postId);
+    console.log(`Fetched ${rows.length} engagement records for post ${postId}`);
+    res.json({ success: true, count: rows.length, data: rows });
+  } catch (err) {
+    console.error('Error fetching engagement for post:', err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
