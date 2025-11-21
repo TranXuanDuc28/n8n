@@ -1,3 +1,5 @@
+"use strict";
+
 const mysql = require('mysql2/promise');
 require('dotenv').config();
 
@@ -12,10 +14,7 @@ const dbConfig = {
   connectionLimit: 10,
   queueLimit: 0,
   charset: 'utf8mb4',
-  timezone: '+07:00', // Vietnam timezone (UTC+7)
-  acquireTimeout: 60000,
-  timeout: 60000,
-  reconnect: true
+  timezone: '+07:00' // Vietnam timezone (UTC+7)
 };
 
 // Create connection pool
@@ -25,10 +24,9 @@ const pool = mysql.createPool(dbConfig);
 async function testConnection() {
   try {
     const connection = await pool.getConnection();
-    
+
     // Set timezone to Vietnam time
     await connection.query("SET time_zone = '+07:00'");
-    
     console.log('✅ Database connected successfully with Vietnam timezone (+07:00)');
     connection.release();
     return true;
@@ -43,10 +41,10 @@ async function query(sql, params = []) {
   let connection;
   try {
     connection = await pool.getConnection();
-    
+
     // Set timezone to Vietnam time for this connection
     await connection.query("SET time_zone = '+07:00'");
-    
+
     // Use pool.query instead of pool.execute to avoid prepared statement issues
     const [results] = await connection.query(sql, params);
     return results;
@@ -65,12 +63,10 @@ async function query(sql, params = []) {
 // Transaction helper
 async function transaction(callback) {
   const connection = await pool.getConnection();
-  
   try {
     // Set timezone to Vietnam time for this connection
     await connection.query("SET time_zone = '+07:00'");
     await connection.beginTransaction();
-    
     const result = await callback(connection);
     await connection.commit();
     connection.release();
@@ -81,11 +77,9 @@ async function transaction(callback) {
     throw error;
   }
 }
-
 module.exports = {
   pool,
   query,
   transaction,
   testConnection
 };
-
