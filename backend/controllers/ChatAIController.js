@@ -8,7 +8,7 @@ class ChatAIController {
   }
 
   /**
-   * AI Reply endpoint for Messenger integration
+   * AI Reply endpoint for Messenger integration (RAG-powered)
    */
   async aiReply(req, res) {
     const startTime = Date.now();
@@ -18,7 +18,7 @@ class ChatAIController {
       const { senderId, message, messageText, text, conversationId } = req.body;
       const userMessage = message || messageText || text;
 
-      this.logger.info('🤖 ChatAI Reply Request', {
+      this.logger.info('🤖 ChatAI Reply Request (RAG)', {
         senderId: senderId ? `***${senderId.slice(-4)}` : 'missing',
         messageLength: userMessage?.length || 0,
         conversationId,
@@ -65,54 +65,71 @@ class ChatAIController {
       const conversationHistory = await this.chatAIService.getConversationHistory(user.id, 5);
       this.logger.debug(`📚 Retrieved ${conversationHistory.length} conversation history items`);
 
-      // 4. Get database responses for context
-      const databaseResponses = await this.chatAIService.getAllResponses();
-      this.logger.debug(`🎯 Retrieved ${databaseResponses.length} database responses`);
-
-      // 5. Generate AI response
-      let aiResponse;
+      // 4. Generate AI response with RAG (NO need to call getAllResponses manually)
+      let aiResponseData;
       try {
-        aiResponse = await this.chatAIService.generateAIResponse(userMessage, conversationHistory, databaseResponses);
-        const respLen = typeof aiResponse === 'string' ? aiResponse.length : (aiResponse?.text?.length || 0);
-        this.logger.info('✅ AI response generated successfully', { responseLength: respLen });
+        // RAG tự động retrieve relevant documents, không cần truyền databaseResponses
+        aiResponseData = await this.chatAIService.generateAIResponse(
+          userMessage, 
+          conversationHistory
+        );
+        
+        const respLen = aiResponseData.response?.length || 0;
+        this.logger.info('✅ RAG-powered AI response generated', { 
+          responseLength: respLen,
+          relevantDocsCount: aiResponseData.relevantDocs?.length || 0,
+          usedRAG: aiResponseData.usedRAG,
+          topRelevance: aiResponseData.relevantDocs?.[0]?.similarity || 0
+        });
       } catch (error) {
-        this.logger.error('❌ AI generation failed', { error: error.message });
-        aiResponse = { text: 'Xin lỗi, tôi đang gặp sự cố kỹ thuật. Vui lòng thử lại sau hoặc liên hệ trực tiếp với chúng tôi qua số điện thoại. 😊' };
+        this.logger.error('❌ RAG AI generation failed', { error: error.message });
+        aiResponseData = { 
+          response: 'Xin lỗi, tôi đang gặp sự cố kỹ thuật. Vui lòng thử lại sau hoặc liên hệ trực tiếp với chúng tôi qua số điện thoại. 😊',
+          usedRAG: false,
+          relevantDocs: []
+        };
       }
 
-      // 6. Save AI response
-      const textToSave = typeof aiResponse === 'string' ? aiResponse : (aiResponse?.text || '');
+      // 5. Save AI response
+      const textToSave = aiResponseData.response || '';
       await this.chatAIService.saveMessage(user.id, textToSave, 'sent', null, conversationId);
       this.logger.debug('💾 AI response saved');
 
-      // 7. Log analytics
+      // 6. Log analytics with RAG metadata
       const processingTime = Date.now() - startTime;
       await this.chatAIService.logAnalytics(user.id, 'message_processed', {
         message_text: userMessage,
-        ai_response: aiResponse,
+        ai_response: aiResponseData.response,
         processing_time: processingTime,
         conversation_history_count: conversationHistory.length,
-        database_responses_count: databaseResponses.length,
+        rag_enabled: aiResponseData.usedRAG,
+        relevant_docs_count: aiResponseData.relevantDocs?.length || 0,
+        relevant_docs: aiResponseData.relevantDocs || [],
         timestamp: new Date()
       });
 
-      this.logger.info('🎯 ChatAI Reply completed', {
+      this.logger.info('🎯 ChatAI Reply completed (RAG)', {
         processingTime: `${processingTime}ms`,
-        responseLength: aiResponse.length,
-        userId: user.id
+        responseLength: textToSave.length,
+        userId: user.id,
+        ragUsed: aiResponseData.usedRAG
       });
 
       // Return response for external systems (n8n, etc.)
       res.json({
         success: true,
-        response: typeof aiResponse === 'string' ? aiResponse : aiResponse.text,
-        attachment: typeof aiResponse === 'object' ? aiResponse.attachment : null,
+        response: aiResponseData.response,
         metadata: {
           processingTime,
           userId: user.id,
           conversationHistoryCount: conversationHistory.length,
-          databaseResponsesCount: databaseResponses.length,
-          service: 'chatai'
+          rag: {
+            enabled: aiResponseData.usedRAG,
+            relevantDocsCount: aiResponseData.relevantDocs?.length || 0,
+            relevantDocs: aiResponseData.relevantDocs || [],
+            topRelevance: aiResponseData.relevantDocs?.[0]?.similarity || 0
+          },
+          service: 'chatai-rag'
         }
       });
 
@@ -130,7 +147,7 @@ class ChatAIController {
         response: 'Xin lỗi, có lỗi xảy ra. Vui lòng thử lại sau.',
         metadata: {
           processingTime,
-          service: 'chatai',
+          service: 'chatai-rag',
           errorType: 'server_error'
         }
       });
@@ -181,7 +198,9 @@ class ChatAIController {
   async getUserConversations(req, res) {
     try {
       const { userId } = req.params;
-      const { limit = 50 } = req.query;
+      const { limit = 20 } = req.query;
+      console.log("userId",userId);
+
       
       const conversations = await this.chatAIService.getConversationHistory(userId, parseInt(limit));
       
@@ -200,15 +219,20 @@ class ChatAIController {
   }
 
   /**
-   * Get ChatAI responses
+   * Get ChatAI responses (legacy - for backward compatibility)
    */
   async getResponses(req, res) {
     try {
-      const responses = await this.chatAIService.getAllResponses();
+      const { ChatAIResponse } = require('../models');
+      const responses = await ChatAIResponse.findAll({
+        where: { is_active: true },
+        order: [['created_at', 'DESC']]
+      });
       
       res.json({
         success: true,
-        responses
+        responses,
+        note: 'This endpoint returns static responses only. RAG system automatically retrieves relevant content.'
       });
     } catch (error) {
       this.logger.error('Error getting ChatAI responses', { error: error.message });
@@ -226,19 +250,30 @@ class ChatAIController {
     try {
       const { keyword, response_text, category } = req.body;
       
-      if (!response_text) {
+      if (!keyword || !response_text) {
         return res.status(400).json({
           success: false,
-          error: 'Missing required field: response_text'
+          error: 'Missing required fields: keyword and response_text'
         });
       }
 
-      const responseId = await this.chatAIService.addResponse(keyword, response_text, category);
+      const { ChatAIResponse } = require('../models');
+      const response = await ChatAIResponse.create({
+        keyword,
+        response_text,
+        category: category || 'general',
+        is_active: true
+      });
+      
+      // Invalidate vector cache to rebuild with new response
+      this.chatAIService.vectorCache.lastUpdate = null;
+      this.logger.info('Vector cache invalidated after adding new response');
       
       res.json({
         success: true,
-        id: responseId,
-        message: 'Response added successfully'
+        id: response.id,
+        message: 'Response added successfully. Vector database will rebuild on next query.',
+        note: 'RAG system will automatically include this response in future searches.'
       });
     } catch (error) {
       this.logger.error('Error adding ChatAI response', { error: error.message });
@@ -279,7 +314,7 @@ class ChatAIController {
   }
 
   /**
-   * Get service statistics
+   * Get service statistics (including RAG stats)
    */
   async getStats(req, res) {
     try {
@@ -288,7 +323,12 @@ class ChatAIController {
       res.json({
         success: true,
         stats,
-        service: 'chatai'
+        service: 'chatai-rag',
+        features: {
+          rag_enabled: stats.rag_enabled,
+          semantic_search: stats.embedding_available,
+          vector_database: stats.vector_cache
+        }
       });
     } catch (error) {
       this.logger.error('Error getting ChatAI stats', { error: error.message });
@@ -300,19 +340,24 @@ class ChatAIController {
   }
 
   /**
-   * Test AI service
+   * Test AI service with RAG
    */
   async testAI(req, res) {
     try {
       const { message = 'Hello, test message' } = req.body;
       
-      const testResponse = await this.chatAIService.generateAIResponse(message, [], []);
+      const testResponse = await this.chatAIService.generateAIResponse(message, []);
       
       res.json({
         success: true,
         testMessage: message,
-        aiResponse: testResponse,
-        service: 'chatai'
+        aiResponse: testResponse.response,
+        ragMetadata: {
+          usedRAG: testResponse.usedRAG,
+          relevantDocsCount: testResponse.relevantDocs?.length || 0,
+          relevantDocs: testResponse.relevantDocs || []
+        },
+        service: 'chatai-rag'
       });
     } catch (error) {
       this.logger.error('Error testing ChatAI', { error: error.message });
@@ -324,24 +369,136 @@ class ChatAIController {
   }
 
   /**
-   * Refresh dynamic content from posts and A/B tests
+   * Refresh vector database (RAG)
    */
-  async refreshDynamicContent(req, res) {
+  async refreshVectorDatabase(req, res) {
     try {
-      const result = await this.chatAIService.refreshDynamicContent();
+      this.logger.info('🔄 Manual vector database refresh requested');
+      
+      const result = await this.chatAIService.refreshVectorDatabase();
       
       res.json({
         success: true,
-        message: 'Dynamic content refreshed successfully',
+        message: 'Vector database refreshed successfully',
         data: result
       });
     } catch (error) {
-      this.logger.error('Error refreshing dynamic content', { error: error.message });
+      this.logger.error('Error refreshing vector database', { error: error.message });
       res.status(500).json({
         success: false,
         message: error.message
       });
     }
+  }
+
+  /**
+   * Get vector database info
+   */
+  async getVectorDatabaseInfo(req, res) {
+    try {
+      const cache = this.chatAIService.vectorCache;
+      
+      res.json({
+        success: true,
+        data: {
+          posts: {
+            count: cache.posts.length,
+            sample: cache.posts.slice(0, 3).map(p => ({
+              id: p.id,
+              title: p.title,
+              engagementScore: p.engagementScore,
+              publishedAt: p.publishedAt
+            }))
+          },
+          responses: {
+            count: cache.responses.length,
+            sample: cache.responses.slice(0, 3).map(r => ({
+              id: r.id,
+              keyword: r.keyword,
+              category: r.category
+            }))
+          },
+          abTests: {
+            count: cache.abTests.length,
+            sample: cache.abTests.slice(0, 3).map(t => ({
+              id: t.id,
+              testType: t.testType,
+              bestScore: t.bestScore,
+              completedAt: t.completedAt
+            }))
+          },
+          cache: {
+            lastUpdate: cache.lastUpdate ? new Date(cache.lastUpdate) : null,
+            isValid: cache.lastUpdate && (Date.now() - cache.lastUpdate) < this.chatAIService.ragConfig.cacheExpiry,
+            expiresIn: cache.lastUpdate ? Math.max(0, this.chatAIService.ragConfig.cacheExpiry - (Date.now() - cache.lastUpdate)) : 0
+          }
+        }
+      });
+    } catch (error) {
+      this.logger.error('Error getting vector database info', { error: error.message });
+      res.status(500).json({
+        success: false,
+        error: 'Failed to get vector database info'
+      });
+    }
+  }
+
+  /**
+   * Search similar documents (for debugging/testing RAG)
+   */
+  async searchSimilarDocuments(req, res) {
+    try {
+      const { query, topK } = req.body;
+      
+      if (!query) {
+        return res.status(400).json({
+          success: false,
+          error: 'Missing required field: query'
+        });
+      }
+
+      // Override topK if provided
+      const originalTopK = this.chatAIService.ragConfig.topK;
+      if (topK) {
+        this.chatAIService.ragConfig.topK = parseInt(topK);
+      }
+
+      const relevantDocs = await this.chatAIService.retrieveRelevantDocuments(query);
+      
+      // Restore original topK
+      this.chatAIService.ragConfig.topK = originalTopK;
+
+      res.json({
+        success: true,
+        query,
+        results: relevantDocs.map(doc => ({
+          type: doc.type,
+          id: doc.id,
+          title: doc.title || doc.keyword || doc.testType,
+          similarity: doc.similarity,
+          snippet: doc.type === 'post' 
+            ? doc.content?.substring(0, 200) 
+            : doc.type === 'response'
+            ? doc.responseText?.substring(0, 200)
+            : doc.summary
+        })),
+        count: relevantDocs.length
+      });
+    } catch (error) {
+      this.logger.error('Error searching similar documents', { error: error.message });
+      res.status(500).json({
+        success: false,
+        error: 'Failed to search documents'
+      });
+    }
+  }
+
+  /**
+   * Legacy: Refresh dynamic content (redirects to refresh vector database)
+   */
+  async refreshDynamicContent(req, res) {
+    this.logger.info('Legacy refreshDynamicContent called, redirecting to refreshVectorDatabase');
+    return this.refreshVectorDatabase(req, res);
   }
 
   /**
@@ -351,7 +508,29 @@ class ChatAIController {
     try {
       const { limit = 20, days = 30 } = req.query;
       
-      const posts = await this.chatAIService.getPostsForDynamicAnalysis(parseInt(limit), parseInt(days));
+      const { Post, PlatformPost, Engagement } = require('../models');
+      const posts = await Post.findAll({
+        where: {
+          status: 'published',
+          published_at: {
+            [require('sequelize').Op.gte]: new Date(Date.now() - days * 24 * 60 * 60 * 1000)
+          }
+        },
+        include: [
+          {
+            model: PlatformPost,
+            as: 'platformPosts',
+            required: false
+          },
+          {
+            model: Engagement,
+            as: 'engagements',
+            required: false
+          }
+        ],
+        order: [['published_at', 'DESC']],
+        limit: parseInt(limit)
+      });
       
       res.json({
         success: true,
@@ -360,7 +539,8 @@ class ChatAIController {
           count: posts.length,
           limit: parseInt(limit),
           days: parseInt(days)
-        }
+        },
+        note: 'These posts are automatically indexed in the RAG vector database'
       });
     } catch (error) {
       this.logger.error('Error getting posts for analysis', { error: error.message });

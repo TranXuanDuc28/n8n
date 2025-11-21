@@ -120,6 +120,11 @@ router.get('/chatai/stats', (req, res) => chatAIController.getStats(req, res));
 router.post('/chatai/test-ai', (req, res) => chatAIController.testAI(req, res));
 router.post('/chatai/refresh-dynamic-content', (req, res) => chatAIController.refreshDynamicContent(req, res));
 router.get('/chatai/posts-analysis', (req, res) => chatAIController.getPostsForAnalysis(req, res));
+router.get('/chatai/vector-database-info', (req, res) => chatAIController.getVectorDatabaseInfo(req, res));
+router.post('/chatai/search-similar', (req, res) => chatAIController.searchSimilarDocuments(req, res));
+router.post('/chatai/refresh-vector-database', (req, res) => chatAIController.refreshVectorDatabase(req, res));
+
+
 
 module.exports = router;
 
